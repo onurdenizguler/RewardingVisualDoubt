@@ -1,5 +1,10 @@
 # RewardingVisualDoubt
 
+# Installation 
+Run following line at the root dir:
+```shell
+pip install -e .
+```
 # Dependencies 
 The package uses previously developed and unpackaged **RaDialog** [repo](https://huggingface.co/ChantalPellegrini/RaDialog-interactive-radiology-report-generation) by introducing a simple setup.py to its local clone:
 

@@ -1,13 +1,12 @@
 import typing as T
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import List, NamedTuple, Optional, TypedDict
 import random
 
 import numpy as np
 import pandas as pd
 import torch
-from PIL import Image, ImageFile
+from PIL import Image
 from LLAVA_Biovil.llava.constants import IMAGE_TOKEN_INDEX
 from LLAVA_Biovil.llava.mm_utils import tokenizer_image_token
 from utils import create_chest_xray_transform_for_inference, remap_to_uint8
@@ -15,7 +14,6 @@ from torchvision.transforms import Compose
 from transformers import PreTrainedTokenizer
 
 import mimic_cxr
-import prompter
 
 biovil_image_transformer = create_chest_xray_transform_for_inference(512, center_crop_size=448)
 
@@ -44,7 +42,6 @@ def move_llava_model_input_to_device(
 ) -> LlavaModelInput:
     model_input.images = model_input.images.to(device, dtype=torch.bfloat16)
     model_input.text_prompt_input_ids = model_input.text_prompt_input_ids.to(device)
-    print("hey", model_input.text_prompt_input_ids.device)
     return model_input
 
 
@@ -77,13 +74,6 @@ def _create_llava_model_input_from_mimic_cxr_datapoint(
         text_prompt_input_ids=input_ids,
         images=image,
     )
-
-    # return {
-    #     "input_ids": tokenized.input_ids.squeeze(0),
-    #     "attention_mask": tokenized.attention_mask.squeeze(0),
-    #     "pixel_values": image,
-    #     "labels": torch.tensor(study.disease_labels, dtype=torch.float),
-    # }
 
 
 def create_dataset_generator_from_mimic_cxr_dataset_df(

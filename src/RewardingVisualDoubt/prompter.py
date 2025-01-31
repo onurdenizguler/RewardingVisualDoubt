@@ -1,8 +1,4 @@
 import conversation
-
-conv = conversation.conv_vicuna_v1.copy()
-
-
 import textwrap
 
 REPORT_GENERATION_INITIAL_INSTRUCTION = textwrap.dedent(
@@ -16,7 +12,7 @@ REPORT_GENERATION_INITIAL_INSTRUCTION = textwrap.dedent(
 
 
 def build_report_generation_instruction_from_findings(findings: str) -> str:
-
+    conv = conversation.conv_vicuna_v1.copy()
     conv.append_message("USER", REPORT_GENERATION_INITIAL_INSTRUCTION.format(findings=findings))
     conv.append_message("ASSISTANT", None)
     text_input = conv.get_prompt()
