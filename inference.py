@@ -1,12 +1,16 @@
+import typing as t
 from pathlib import Path
-from huggingface_hub import snapshot_download
 
-from radialogue.LLAVA_Biovil.llava.model.builder import (
+import transformers
+from huggingface_hub import snapshot_download
+from LLAVA_Biovil.biovil_t.model import ImageModel
+from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
+from LLAVA_Biovil.llava.model.builder import (
     load_pretrained_model as llava_load_pretrained_model,
 )
 
-import typing as t
-
+# import from hugginfface transfomers types: PreTrainedTokenizer
+from transformers import PreTrainedTokenizer
 
 LLAVA_BASE_MODEL_NAME = "liuhaotian/llava-v1.5-7b"
 LLAVA_LORA_ADAPTER = "llava-v1.5-7b-task-lora_radialog_instruct_llava_biovil_unfrozen_2e-5_5epochs_v5_checkpoint-21000"
@@ -17,7 +21,9 @@ def _get_hf_model_path(repo_id) -> Path:
     return Path(snapshot_download(repo_id=repo_id, revision="main"))
 
 
-def load_visual_language_model() -> tuple[t.Any, t.Any, t.Any, t.Any]:
+def load_visual_language_model_Llava() -> (
+    tuple[transformers.PreTrainedTokenizer, LlavaLlamaForCausalLM, ImageModel, int]
+):
 
     tokenizer, model, image_processor, context_len = llava_load_pretrained_model(
         model_path=_get_hf_model_path(repo_id=FINETUNED_LLAVA_REPO_ID),
@@ -26,6 +32,8 @@ def load_visual_language_model() -> tuple[t.Any, t.Any, t.Any, t.Any]:
         load_8bit=False,
         load_4bit=False,
     )
+
+    model.config.tokenizer_padding_side = "left"
 
     return tokenizer, model, image_processor, context_len
 
@@ -76,6 +84,7 @@ def generate_report_for_single_study(model, xray_image, dialogue_history, binary
     #     )
 
     # pred = tokenizer.decode(output_ids[0, input_ids.shape[1] :]).strip().replace("</s>", "")
+    # convert_binary_findings_to_text()
     pass
 
 

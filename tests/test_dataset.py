@@ -1,6 +1,7 @@
-import dataset
-import os
 import logging
+import os
+
+import dataset
 
 logging.basicConfig(level=logging.INFO)
 

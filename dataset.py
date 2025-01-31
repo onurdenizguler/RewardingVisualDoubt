@@ -1,36 +1,11 @@
-from datasets import Dataset, Image, Features, ClassLabel, Sequence
-import pandas as pd
+# %%
 import os
-from pathlib import Path
-import numpy as np
-import dataclasses
 
+import pandas as pd
 
-MIMIC_CXR_FILES_DIR_NAME_PATTERN = "p1[0-9]"
-MIMIC_CXR_PATIENT_DIR_NAME_PATTERN = "p*"
-MIMIC_CXR_STUDY_DIR_NAME_PATTERN = "s*"
-MIMIC_CXR_DATASET_ROOT_DIR = "/home/data/DIVA/mimic/mimic-cxr-jpg/2.0.0/files"
-MIMIC_CXR_SPLIT_CSV_PATH = "/home/data/DIVA/mimic/mimic-cxr-jpg/2.0.0/mimic-cxr-2.0.0-split.csv"
-MIMIC_CXR_FINDINGS_CSV_PATH = (
-    "/home/data/DIVA/mimic/mimic-cxr-jpg/2.0.0/mimic-cxr-2.0.0-chexpert.csv"
-)
+# from datasets import ClassLabel, Dataset, Features, Image, Sequence
 
-
-@dataclasses.dataclass
-class MimicCxrRelativeImgPath:
-    subject_id: str
-    study_id: str
-    dicom_id: str
-
-    @property
-    def relative_img_path(self) -> str:
-        subject_prefix = str(self.subject_id)[:2]
-        return os.path.join(
-            f"p{subject_prefix}",
-            f"p{self.subject_id}",
-            f"s{self.study_id}",
-            f"{self.dicom_id}.jpg",
-        )
+import mimic_cxr
 
 
 def _aggregate_and_sort_split_and_findings_information(
@@ -38,6 +13,13 @@ def _aggregate_and_sort_split_and_findings_information(
 ) -> pd.DataFrame:
     merged_df = pd.merge(findings_df, split_df, on=["subject_id", "study_id"], how="inner")
     merged_df = merged_df.sort_values(["subject_id", "study_id"])
+    # Make sure the column names match the ChexpertFinding types
+    for df_finding_col_name, chexpert_finding_name in zip(
+        merged_df.columns[2:15].tolist(), [finding.value for finding in mimic_cxr.ChexpertFinding]
+    ):
+        assert (
+            df_finding_col_name == chexpert_finding_name
+        ), "Column names do not match ChexpertFinding types"
     return merged_df
 
 
@@ -45,8 +27,8 @@ def _resolve_img_path(mimic_cxr_df: pd.DataFrame) -> pd.DataFrame:
     mimic_cxr_df = mimic_cxr_df.copy()
     mimic_cxr_df["img_path"] = mimic_cxr_df.apply(
         lambda row: os.path.join(
-            MIMIC_CXR_DATASET_ROOT_DIR,
-            MimicCxrRelativeImgPath(
+            mimic_cxr.MIMIC_CXR_DATASET_ROOT_DIR,
+            mimic_cxr.MimicCxrRelativeImgPath(
                 subject_id=row["subject_id"], study_id=row["study_id"], dicom_id=row["dicom_id"]
             ).relative_img_path,
         ),
@@ -56,8 +38,8 @@ def _resolve_img_path(mimic_cxr_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def create_mimic_cxr_dataset_df(
-    mimic_cxr_split_csv_path: str = MIMIC_CXR_SPLIT_CSV_PATH,
-    mimic_cxr_findings_csv_path: str = MIMIC_CXR_FINDINGS_CSV_PATH,
+    mimic_cxr_split_csv_path: str = mimic_cxr.MIMIC_CXR_SPLIT_CSV_PATH,
+    mimic_cxr_findings_csv_path: str = mimic_cxr.MIMIC_CXR_FINDINGS_CSV_PATH,
 ):
     """
     Create a Hugging Face dataset from the X-ray images and their labels
@@ -72,3 +54,9 @@ def create_mimic_cxr_dataset_df(
     findings_and_split_df = _resolve_img_path(findings_and_split_df)
 
     return findings_and_split_df
+
+
+# %%
+create_mimic_cxr_dataset_df().head()
+
+# %%
