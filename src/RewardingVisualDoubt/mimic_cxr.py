@@ -65,7 +65,7 @@ def _aggregate_and_sort_split_and_findings_information(
     merged_df = merged_df.sort_values(["subject_id", "study_id"])
     # Make sure the column names match the ChexpertFinding types
     for df_finding_col_name, chexpert_finding_name in zip(
-        merged_df.columns[2:15].tolist(), [finding.value for finding in mimic_cxr.ChexpertFinding]
+        merged_df.columns[2:15].tolist(), [finding.value for finding in ChexpertFinding]
     ):
         assert (
             df_finding_col_name == chexpert_finding_name

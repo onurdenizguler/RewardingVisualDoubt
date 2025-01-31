@@ -13,7 +13,7 @@ from utils import create_chest_xray_transform_for_inference, remap_to_uint8
 from torchvision.transforms import Compose
 from transformers import PreTrainedTokenizer
 
-import mimic_cxr
+from . import mimic_cxr
 
 biovil_image_transformer = create_chest_xray_transform_for_inference(512, center_crop_size=448)
 

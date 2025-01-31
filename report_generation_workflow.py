@@ -1,8 +1,7 @@
 # %%
 %load_ext autoreload
 %autoreload 2
-from RewardingVisualDoubt import dataset, mimic_cxr, prompter, vllm, inference
-
+from src.RewardingVisualDoubt import mimic_cxr, dataset, prompter, vllm, inference
 from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
 from LLAVA_Biovil.llava.conversation import SeparatorStyle, conv_vicuna_v1
 
@@ -19,7 +18,7 @@ dataset_ = dataset.create_dataset_generator_from_mimic_cxr_dataset_df(
     device=model.device,
 )()
 
-# %% generate a report
+# %% generate a few reports
 for idx, datapoint in enumerate(dataset_):
     stopping_criteria = KeywordsStoppingCriteria([STOP_STR], tokenizer, datapoint["text_prompt_input_ids"])
     pred = inference.generate_report_for_single_study(
