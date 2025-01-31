@@ -1,0 +1,11 @@
+accelerate==0.21.0
+huggingface-hub==0.19.4
+timm==0.6.13
+transformers==4.31.0
+scikit-image==0.18.1
+peft==0.4.0
+pytorch_lightning==1.6.5
+chardet
+scikit-learn==1.2.2
+sentencepiece==0.1.99
+numpy==1.26.4
