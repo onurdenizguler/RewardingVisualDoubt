@@ -5,10 +5,8 @@ import transformers
 from huggingface_hub import snapshot_download
 from LLAVA_Biovil.biovil_t.model import ImageModel
 from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
-from LLAVA_Biovil.llava.model.builder import (
-    load_pretrained_model as llava_load_pretrained_model,
-)
-
+from LLAVA_Biovil.llava.model.builder import \
+    load_pretrained_model as llava_load_pretrained_model
 
 LLAVA_BASE_MODEL_NAME = "liuhaotian/llava-v1.5-7b"
 LLAVA_LORA_ADAPTER = "llava-v1.5-7b-task-lora_radialog_instruct_llava_biovil_unfrozen_2e-5_5epochs_v5_checkpoint-21000"

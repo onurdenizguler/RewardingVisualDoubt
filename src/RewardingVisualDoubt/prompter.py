@@ -1,5 +1,6 @@
-import conversation
 import textwrap
+
+import conversation
 
 REPORT_GENERATION_INITIAL_INSTRUCTION = textwrap.dedent(
     """  

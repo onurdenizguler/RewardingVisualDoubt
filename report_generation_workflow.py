@@ -1,9 +1,10 @@
 # %%
 %load_ext autoreload
 %autoreload 2
-from src.RewardingVisualDoubt import mimic_cxr, dataset, prompter, vllm, inference
-from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
 from LLAVA_Biovil.llava.conversation import SeparatorStyle, conv_vicuna_v1
+from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
+
+from RewardingVisualDoubt import dataset, inference, mimic_cxr, prompter, vllm
 
 STOP_STR = conv_vicuna_v1.copy().sep if conv_vicuna_v1.copy().sep_style != SeparatorStyle.TWO else conv_vicuna_v1.copy().sep2
 
@@ -27,4 +28,3 @@ for idx, datapoint in enumerate(dataset_):
     print(f"File_idx {idx}, ASSISTANT: ", pred)
     if idx == 10:
         break
-

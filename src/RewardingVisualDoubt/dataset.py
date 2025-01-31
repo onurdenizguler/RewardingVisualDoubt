@@ -1,17 +1,17 @@
-import typing as T
-from dataclasses import dataclass, asdict
-from pathlib import Path
 import random
+import typing as T
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import torch
-from PIL import Image
 from LLAVA_Biovil.llava.constants import IMAGE_TOKEN_INDEX
 from LLAVA_Biovil.llava.mm_utils import tokenizer_image_token
-from utils import create_chest_xray_transform_for_inference, remap_to_uint8
+from PIL import Image
 from torchvision.transforms import Compose
 from transformers import PreTrainedTokenizer
+from utils import create_chest_xray_transform_for_inference, remap_to_uint8
 
 from . import mimic_cxr
 

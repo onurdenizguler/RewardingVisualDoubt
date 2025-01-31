@@ -1,10 +1,10 @@
 import dataclasses
 import enum
+import os
 import typing as T
 from pathlib import Path
-import os
-import pandas as pd
 
+import pandas as pd
 
 MIMIC_CXR_FILES_DIR_NAME_PATTERN = "p1[0-9]"
 MIMIC_CXR_PATIENT_DIR_NAME_PATTERN = "p*"
