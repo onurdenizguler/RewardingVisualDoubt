@@ -28,7 +28,7 @@ with open("requirements.txt") as f:
 
 
 setup(
-    name="radialogue",
+    name="radialog",
     packages=find_packages(),
     # Add any dependencies the code needs
     install_requires=requirements,
@@ -41,4 +41,4 @@ Then, the package is ready to be installed at the root directory of the local cl
 pip install -e .
 ```
 
-This installation allows ```RewardingVisualDoubt``` to import the package by a simple import: ```ìmport radialogue```
+This installation allows ```RewardingVisualDoubt``` to import the package by a simple import: ```ìmport radialog```
