@@ -11,6 +11,13 @@ REPORT_GENERATION_INITIAL_INSTRUCTION = textwrap.dedent(
  """
 )
 
+BINARY_QA_INITIAL_INSTRUCTION = textwrap.dedent(
+    """  
+ <image>. Predicted Findings: {findings}. You are to act as a radiologist and answer the following question: 
+ Is the following disease(s) visible in the X-ray image: {comma_seperated_list_of_diseases}?)
+ """
+)
+
 
 def build_report_generation_instruction_from_findings(findings: str) -> str:
     conv = conversation.conv_vicuna_v1.copy()
