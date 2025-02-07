@@ -8,9 +8,9 @@ from RewardingVisualDoubt import dataset, inference, mimic_cxr, prompter, vllm
 
 STOP_STR = conv_vicuna_v1.copy().sep if conv_vicuna_v1.copy().sep_style != SeparatorStyle.TWO else conv_vicuna_v1.copy().sep2
 
-# %% load the model and helpers
-tokenizer, model, image_processor, context_len = vllm.load_visual_language_model_Llava()
-
+# %% load the model
+model = vllm.load_pretrained_llava_model()
+tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(model_base=vllm.LLAVA_BASE_MODEL_NAME)
 # %% load the entire dataset
 dataset_ = dataset.create_dataset_generator_from_mimic_cxr_dataset_df(
     mimic_cxr_df=mimic_cxr.create_mimic_cxr_dataset_df(),
