@@ -14,6 +14,7 @@ from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
 from torch.utils.data import DataLoader
 
 from RewardingVisualDoubt import dataset, inference, mimic_cxr, prompter, shared, vllm
+from datasets import IterableDataset
 
 STOP_STR = (
     conv_vicuna_v1.copy().sep
@@ -77,3 +78,20 @@ for idx, datapoint in enumerate(dataloader):
 
 
 # %% ask a few binary qa questions
+
+
+####################################################################################################
+# ARCHIVED CODE
+# %% Create dataset via dataset generator into HF Dataset (lazy loading)
+dataset_generator = dataset.create_dataset_generator_from_mimic_cxr_dataset_df(
+    mimic_cxr_df=mimic_cxr.create_mimic_cxr_dataset_df(),
+    prompter=prompter.build_report_generation_instruction_from_findings,
+    tokenizer=tokenizer,
+    device=torch.device(shared.torch_devices.cuda.value),
+    shuffle=False,
+)
+
+no_split_dataset = IterableDataset.from_generator(generator=dataset_generator)
+for datapoint in no_split_dataset:
+    print(datapoint)
+    break
