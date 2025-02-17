@@ -33,12 +33,27 @@ class ChexpertFinding(enum.Enum):
     SUPPORT_DEVICES = "Support Devices"
 
 
+class ChexpertLabel(enum.Enum):
+    POSITIVE = 1.0
+    NEGATIVE = 0.0
+    UNCERTAIN = -1.0
+
+
 @dataclasses.dataclass
 class MimicCxrDatapoint:
     subject_id: int
     study_id: int
     disease_labels: T.List[ChexpertFinding]
     img_path: Path
+
+
+@dataclasses.dataclass
+class MimicCxrBinaryQADatapoint:
+    subject_id: int
+    study_id: int
+    img_path: Path
+    disease: ChexpertFinding
+    label: ChexpertLabel
 
 
 @dataclasses.dataclass
@@ -108,3 +123,54 @@ def create_mimic_cxr_dataset_df(
     findings_and_split_df = _resolve_img_path(findings_and_split_df)
 
     return findings_and_split_df
+
+
+def create_balanced_binary_qa_mimic_cxr_dataset_df(
+    mimic_cxr_df: pd.DataFrame,
+) -> pd.DataFrame:
+    # TODO admit split data!
+
+    disease_cols = [disease.value for disease in ChexpertFinding]
+    disease_cols.pop(disease_cols.index("No Finding"))
+
+    # Melt the original dataframe so that each row corresponds to one disease label for a study
+    df_melt = mimic_cxr_df.melt(
+        id_vars=["subject_id", "study_id", "dicom_id", "split", "img_path"],
+        value_vars=disease_cols,
+        var_name="disease",
+        value_name="label",
+    )
+
+    # Filter out uncertain (-1.0) and missing values; keep only confident labels (1.0 and 0.0)
+    df_melt = df_melt[
+        df_melt["label"].isin([ChexpertLabel.POSITIVE.value, ChexpertLabel.NEGATIVE.value])
+    ].copy()
+
+    # Convert labels to booleans (1.0 becomes True, 0.0 becomes False)
+    df_melt["label"] = df_melt["label"].astype(bool)
+
+    # For each disease, oversample the minority class so that positives and negatives are balanced
+    balanced_dfs = []
+    for disease in df_melt["disease"].unique():
+        sub_df = df_melt[df_melt["disease"] == disease]
+        pos = sub_df[sub_df["label"] == True]
+        neg = sub_df[sub_df["label"] == False]
+
+        # Oversample the minority class using replacement
+        if len(pos) > len(neg):
+            neg_balanced = neg.sample(n=len(pos), replace=True, random_state=42)
+            balanced_sub = pd.concat([pos, neg_balanced])
+        elif len(neg) > len(pos):
+            pos_balanced = pos.sample(n=len(neg), replace=True, random_state=42)
+            balanced_sub = pd.concat([neg, pos_balanced])
+        else:
+            balanced_sub = sub_df  # Already balanced
+        balanced_dfs.append(balanced_sub)
+
+    # Combine all diseases into one dataframe and shuffle it
+    balanced_df_oversampled = pd.concat(balanced_dfs).reset_index(drop=True)
+    balanced_df_oversampled = balanced_df_oversampled.sample(frac=1, random_state=42).reset_index(
+        drop=True
+    )
+
+    return balanced_df_oversampled
