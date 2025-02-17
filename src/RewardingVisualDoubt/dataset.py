@@ -50,6 +50,13 @@ class PromptedMimicCxrLlavaModelInputDatapointDict(T.TypedDict):
     mimic_cxr_datapoint_metadata: mimic_cxr.MimicCxrDatapoint
 
 
+class BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict(T.TypedDict):
+    llava_model_input_dict: LlavaModelInputDict
+    label: bool | None
+    prompt: str
+    mimic_cxr_datapoint_metadata: mimic_cxr.MimicCxrBinaryQADatapoint
+
+
 # data interface coupled with loading conversion logic
 def _load_image(
     image_path: Path,
@@ -68,6 +75,12 @@ def _create_prompt(
     findings_string = mimic_cxr.convert_binary_chexpert_findings_to_string(disease_labels)
     text_input = prompter(findings_string)
     return text_input
+
+
+def _create_prompt_for_binary_qa(
+    binary_qa_prompter: T.Callable[[str], str], disease: mimic_cxr.ChexpertFinding
+) -> str:
+    return binary_qa_prompter(disease.value)
 
 
 # training/inference time logic
@@ -89,7 +102,7 @@ def move_llava_model_input_dict_to_device(
 
 # model repository function coupled with datapoint and prompter
 def _create_llava_model_input_from_mimic_cxr_datapoint(
-    datapoint: mimic_cxr.MimicCxrDatapoint,
+    datapoint: mimic_cxr.MimicCxrDatapoint | mimic_cxr.MimicCxrBinaryQADatapoint,
     tokenizer: PreTrainedTokenizer,
     prompter: T.Callable[[str], str],
     image_transform: T.Callable[[Image.Image], torch.Tensor] | None = biovil_image_transformer,
@@ -103,7 +116,15 @@ def _create_llava_model_input_from_mimic_cxr_datapoint(
     else:
         image = torch.tensor(np.array(image))  # .unsqueeze(0)
 
-    text_input = _create_prompt(prompter, datapoint.disease_labels)
+    if isinstance(datapoint, mimic_cxr.MimicCxrBinaryQADatapoint):
+        text_input = _create_prompt_for_binary_qa(prompter, datapoint.disease)
+    elif isinstance(datapoint, mimic_cxr.MimicCxrDatapoint):
+        text_input = _create_prompt(prompter, datapoint.disease_labels)
+    else:
+        exception_message = (
+            "datapoint must be an instance of either MimicCxrDatapoint or MimicCxrBinaryQADatapoint"
+        )
+        raise ValueError(exception_message)
 
     # get findings from the datapoint
     # Handle text input
@@ -129,6 +150,19 @@ def _create_mimic_cxr_datapoint_from_mimic_cxr_dataset_df_row(
             if value == 1
         ],
         img_path=row["img_path"],
+    )
+    return mimic_cxr_datapoint
+
+
+def _create_mimic_cxr_binary_qa_datapoint_from_mimic_cxr_dataset_df_row(
+    row: pd.Series,
+) -> mimic_cxr.MimicCxrBinaryQADatapoint:
+    mimic_cxr_datapoint = mimic_cxr.MimicCxrBinaryQADatapoint(
+        subject_id=row["subject_id"],
+        study_id=row["study_id"],
+        img_path=row["img_path"],
+        disease=mimic_cxr.ChexpertFinding(row["disease"]),
+        label=mimic_cxr.ChexpertLabel(row["label"]),
     )
     return mimic_cxr_datapoint
 
@@ -168,6 +202,51 @@ class PromptedMimicCxrLlavaModelInputDataset(TorchDataset):
             label=label,
             prompt=prompt,
             mimic_cxr_datapoint_metadata=mimic_cxr_datapoint,
+        )
+
+
+@dataclass
+class BinaryQAPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
+    """
+    mimic_cxr_df: pandas DataFrame containing MIMIC-CXR metadata (including `img_path`, `subject_id`, `study_id`, `split`).
+    This dataset is used for training a model to answer binary questions about the presence of a specific disease in a chest x-ray image.
+    Each datapoint in this dataset contains a chest x-ray image, a prompt asking about one of the 13 possible CheXpert diseases, and a label indicating the presence or absence of the finding in the image.
+    """
+
+    balanced_binary_qa_mimic_cxr_df: pd.DataFrame
+    tokenizer: PreTrainedTokenizer
+    prompter: T.Callable[[str], str]
+    image_transform: T.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer
+    split: DatasetSplit = DatasetSplit.TRAIN
+    supports_label: bool = False
+
+    def __post_init__(self):
+        self.df = self.balanced_binary_qa_mimic_cxr_df[
+            self.balanced_binary_qa_mimic_cxr_df["split"] == self.split.value
+        ]
+
+    def __len__(self):
+        return len(self.df)
+
+    def __getitem__(self, idx: int) -> BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict:
+
+        row = self.df.iloc[idx]
+        mimic_cxr_binary_qa_datapoint = (
+            _create_mimic_cxr_binary_qa_datapoint_from_mimic_cxr_dataset_df_row(row)
+        )
+        prompt = _create_prompt_for_binary_qa(self.prompter, mimic_cxr_binary_qa_datapoint.disease)
+        llava_model_input = _create_llava_model_input_from_mimic_cxr_datapoint(
+            mimic_cxr_binary_qa_datapoint, self.tokenizer, self.prompter, self.image_transform
+        )
+
+        label = mimic_cxr_binary_qa_datapoint.label
+        # TODO tokenize label?
+
+        return BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict(
+            llava_model_input_dict=llava_model_input.as_dict(),
+            label=bool(label.value),
+            prompt=prompt,
+            mimic_cxr_datapoint_metadata=mimic_cxr_binary_qa_datapoint,
         )
 
 

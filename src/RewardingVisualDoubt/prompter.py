@@ -14,8 +14,7 @@ REPORT_GENERATION_INITIAL_INSTRUCTION = textwrap.dedent(
 BINARY_QA_INITIAL_INSTRUCTION = textwrap.dedent(
     """  
  <image>. You are to act as a radiologist and answer the following question: 
- Are the following disease(s) visible in the given X-ray image: {comma_seperated_list_of_findings_under_study}?) 
- Answer with 'true' or 'false'. Say nothing else.
+ Is the following disease visible in the given X-ray image: {chexpert_finding_str}?)
  """
 )
 
@@ -28,15 +27,13 @@ def build_report_generation_instruction_from_findings(findings: str) -> str:
     return text_input
 
 
-def build_binary_qa_instruction_from_findings_under_study(
-    comma_seperated_list_of_findings_under_study: str,
+def build_binary_qa_instruction_from_disease_under_study(
+    chexpert_finding_str: str,
 ) -> str:
     conv = conversation.conv_vicuna_v1.copy()
     conv.append_message(
         "USER",
-        BINARY_QA_INITIAL_INSTRUCTION.format(
-            comma_seperated_list_of_findings_under_study=comma_seperated_list_of_findings_under_study
-        ),
+        BINARY_QA_INITIAL_INSTRUCTION.format(chexpert_finding_str=chexpert_finding_str),
     )
     conv.append_message("ASSISTANT", None)
     text_input = conv.get_prompt()
