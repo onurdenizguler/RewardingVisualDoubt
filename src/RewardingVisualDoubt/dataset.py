@@ -4,15 +4,16 @@ import typing as T
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from huggingface_hub.lfs import TypedDict
 import numpy as np
 import pandas as pd
 import torch
+from huggingface_hub.lfs import TypedDict
 from LLAVA_Biovil.llava.constants import IMAGE_TOKEN_INDEX
 from LLAVA_Biovil.llava.mm_utils import tokenizer_image_token
 from PIL import Image
-from torch.utils.data import Dataset as TorchDataset
 from torch.nn.utils.rnn import pad_sequence as torch_pad_sequence
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset as TorchDataset
 from transformers import PreTrainedTokenizer
 from utils import create_chest_xray_transform_for_inference, remap_to_uint8
 
@@ -295,7 +296,44 @@ def prompted_mimic_cxr_llava_model_input_collate_fn(
     batch_metadata = list(mimic_cxr_datapoint_metadatas)
     batch_prompts = list(prompts)
 
+    # TODO Return a dictionary instead of a tuple
     return batch_llava_model_inputs, batch_labels, batch_prompts, batch_metadata
+
+
+def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
+    split: DatasetSplit, tokenizer: PreTrainedTokenizer, prompter: T.Callable[[str], str]
+) -> BinaryQAPromptedMimicCxrLlavaModelInputDataset:
+    return BinaryQAPromptedMimicCxrLlavaModelInputDataset(
+        balanced_binary_qa_mimic_cxr_df=mimic_cxr.create_balanced_binary_qa_mimic_cxr_dataset_df(
+            mimic_cxr.create_mimic_cxr_dataset_df()
+        ),
+        tokenizer=tokenizer,
+        prompter=prompter,
+        image_transform=biovil_image_transformer,
+        split=split,
+    )
+
+
+def get_mimic_cxr_llava_model_input_dataloader(
+    dataset: (
+        PromptedMimicCxrLlavaModelInputDataset | BinaryQAPromptedMimicCxrLlavaModelInputDataset
+    ),
+    batch_size: int,
+    padding_value: int,
+    num_workers: int,
+) -> DataLoader:
+    return DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn(
+            x, padding_value=padding_value
+        ),  # vicuna/llama does not have a padding token, use the EOS token instead
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+        persistent_workers=True,
+    )
 
 
 # Probably retire this function
