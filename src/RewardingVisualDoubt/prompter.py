@@ -1,3 +1,4 @@
+# %%
 import dataclasses
 import enum
 import typing as T
@@ -18,9 +19,6 @@ REPORT_GENERATION_INITIAL_INSTRUCTION = (
 BINARY_QA_INITIAL_INSTRUCTION = (
     "<image>. You are to act as a radiologist and answer the following question: "
     "Is the following disease visible in the given X-ray image: {chexpert_finding_str}? "
-    "It is extremely crucial that you provide a self evaluation of your confidence in your answer. Otherwise your answer is meaningless. "
-    "Therefore, after answering the question, provide a confidence score between 0 and 5 in the wollowing format: confidence_score: <score> "
-    "If you do not provide a confidence_score, you will be penalized! "
 )
 
 
@@ -101,7 +99,6 @@ def build_report_generation_instruction_from_findings(findings: str) -> str:
 def build_binary_qa_instruction_from_disease_under_study(
     chexpert_finding_str: str,
 ) -> str:
-    # conv = conversation.conv_vicuna_v1.copy()
     conversation = _get_vicuna_conversation()
     _add_message_to_conversation(
         conversation=conversation,
@@ -115,3 +112,35 @@ def build_binary_qa_instruction_from_disease_under_study(
         message=Message(role=Role.ASSISTANT, text=None),
     )
     return _convert_conversation_into_prompt(conversation)
+
+
+def build_binary_qa_instruction_from_disease_under_study_with_confidence_example(
+    chexpert_finding_str: str,
+) -> str:
+    conversation = _get_vicuna_conversation()
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(role=Role.USER, text="Please provide me your response template."),
+    )
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(
+            role=Role.ASSISTANT,
+            text=(
+                "I will provide my responses in the following format:"
+                "<response> confidence_score: <score>"
+            ),
+        ),
+    )
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(
+            role=Role.USER,
+            text=BINARY_QA_INITIAL_INSTRUCTION.format(chexpert_finding_str=chexpert_finding_str),
+        ),
+    )
+    return _convert_conversation_into_prompt(conversation)
+
+
+# %%
+build_binary_qa_instruction_from_disease_under_study_with_confidence_example("Pneumothorax")
