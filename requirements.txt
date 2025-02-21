@@ -14,6 +14,7 @@ ipykernel==6.29.5
 ipywidgets==8.1.5
 pytest
 seaborn
+bitsandbytes==0.41.0
 #unsloth[colab-new] @ git+https://github.com/ChantalMP/unsloth.git # ver 2024.8
 
 # INSTALLED THROUGH CONDA CHANNELS
