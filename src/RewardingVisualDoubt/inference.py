@@ -24,7 +24,7 @@ def generate_radialog_answer_for_binary_qa_for_single_study(
 ) -> str:
     with torch.inference_mode():
         output_ids = model.generate(
-            input_ids,
+            input_ids=input_ids,
             images=image_tensor,
             do_sample=False,
             use_cache=True,
