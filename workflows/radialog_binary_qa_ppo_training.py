@@ -1,10 +1,7 @@
 # %% Set script for interactive development and import modules
-from IPython.core.getipython import get_ipython
+from RewardingVisualDoubt import infrastructure
 
-ipython_client = get_ipython()
-if ipython_client:
-    ipython_client.run_line_magic(magic_name="load_ext", line="autoreload")
-    ipython_client.run_line_magic(magic_name="autoreload", line="2")
+infrastructure.make_ipython_reactive_to_changing_codebase()
 
 import pathlib as path
 
@@ -19,14 +16,13 @@ from RewardingVisualDoubt import dataset, mimic_cxr, prompter, shared, vllm
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_OUTPUT_DIR = path.Path("output")
 
-# %% load tokenizer
-tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
-    model_base=vllm.LLAVA_BASE_MODEL_NAME
-)
-
 
 # %%
 def train(out_dir: path.Path = DEFAULT_OUTPUT_DIR, batch_size: int = DEFAULT_BATCH_SIZE):
+
+    ######################################## 0. Define the environment ########################################
+
+    # TODO: Arg parsing etc
     # if not os.path.exists(out_dir):
     #     os.mkdir(out_dir)
 
@@ -42,31 +38,33 @@ def train(out_dir: path.Path = DEFAULT_OUTPUT_DIR, batch_size: int = DEFAULT_BAT
     # with open(os.path.join(out_dir, "parameters.json"), "w") as outfile:
     #     json.dump(parameters, outfile)
 
-    device = (
-        torch.device(shared.torch_devices.cuda.value)
+    device_str = (
+        shared.torch_devices.cuda.value
         if torch.cuda.is_available()
-        else torch.device(shared.torch_devices.cpu.value)
+        else shared.torch_devices.cpu.value
     )
+    device = torch.device(device_str)
 
-    model = vllm.load_pretrained_llava_model_for_ppo_training()
-    model.to(device)
+    ######################################## 1. Load the model and tokenizer ########################################
 
-    model_ref = vllm.load_pretrained_llava_model_for_ppo_training()
-    model_ref.to(device)
+    model = vllm.load_pretrained_llava_model_for_ppo_training(device_str=device_str)
+    model_ref = vllm.load_pretrained_llava_model_for_ppo_training(device_str=device_str)
 
-    # tokenizer = load_tokenizer(tokenizer_dir) # TODO do i need a tokenizer dir?
     tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
         model_base=vllm.LLAVA_BASE_MODEL_NAME
     )
-
-    # model.config.tokenizer_padding_side = "left"  # RaDialog loading logic handles it alreay
-    # model.padding_side='left' - PAUL DOES IT
-    # model.pad_token_id = tokenizer.eos_token_id - PAUL DOES IT
-
     padding_tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
         model_base=vllm.LLAVA_BASE_MODEL_NAME
     )
     padding_tokenizer.padding_side = "left"
+
+    # TODO do i need a tokenizer dir? # tokenizer = load_tokenizer(tokenizer_dir)
+    # TODO: need padding from the left???
+    #### model.config.tokenizer_padding_side = "left"  # RaDialog loading logic handles it alreay
+    #### model.padding_side='left' - PAUL DOES IT
+    #### model.pad_token_id = tokenizer.eos_token_id - PAUL DOES IT
+
+    ######################################## 2. Load the datasets and the dataloaders ########################################
 
     dataset_train = dataset.get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
         split=dataset.DatasetSplit.TRAIN,
@@ -93,6 +91,8 @@ def train(out_dir: path.Path = DEFAULT_OUTPUT_DIR, batch_size: int = DEFAULT_BAT
         # num_workers=4, # Let Torch decide.
     )
 
+    ######################################## 3. Define the PPO and generation configurations ########################################
+
     config = PPOConfig(
         learning_rate=lr,
         task_name="gpt",
@@ -103,14 +103,6 @@ def train(out_dir: path.Path = DEFAULT_OUTPUT_DIR, batch_size: int = DEFAULT_BAT
         remove_unused_columns=False,
         optimize_device_cache=True,
         init_kl_coef=0.05,
-    )
-
-    ppo_trainer = PPOTrainerNoCache(
-        model=model,
-        config=config,
-        dataset=dataset_train,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
     )
 
     prediction_terminators = [
@@ -158,6 +150,16 @@ def train(out_dir: path.Path = DEFAULT_OUTPUT_DIR, batch_size: int = DEFAULT_BAT
         "pad_token_id": tokenizer.eos_token_id,
     }
 
+    ######################################## 4. Get trainer and set training aspirations ########################################
+
+    ppo_trainer = PPOTrainerNoCache(
+        model=model,
+        config=config,
+        dataset=dataset_train,
+        tokenizer=tokenizer,
+        data_collator=data_collator,
+    )
+
     # For random exploration
     confidences = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     confidences = [str(c) for c in confidences]
@@ -168,6 +170,8 @@ def train(out_dir: path.Path = DEFAULT_OUTPUT_DIR, batch_size: int = DEFAULT_BAT
 
     best_reward = -100
     best_reward_epoch = -1
+
+    ######################################## 5. Train the model ########################################
 
     for epoch in range(epochs):
 
@@ -180,10 +184,7 @@ def train(out_dir: path.Path = DEFAULT_OUTPUT_DIR, batch_size: int = DEFAULT_BAT
             questions = batch["question"]
             is_multiple_choice = batch["is_multiple_choice"]
 
-            if is_unsloth:
-                FastLanguageModel.for_inference(model.pretrained_model)
-            else:
-                model.eval()
+            model.eval()
 
             prediction = model.generate(
                 input_ids=input_ids, attention_mask=attention_mask, **generation_kwargs_prediction
@@ -191,8 +192,7 @@ def train(out_dir: path.Path = DEFAULT_OUTPUT_DIR, batch_size: int = DEFAULT_BAT
             prediction = [remove_padding(p, tokenizer.pad_token_id) for p in prediction]
 
             # Generate confidence
-            if not is_unsloth:
-                model.train()
+            model.train()
             response_tensors = ppo_trainer.generate(
                 prediction, return_prompt=False, **generation_kwargs_ppo
             )
