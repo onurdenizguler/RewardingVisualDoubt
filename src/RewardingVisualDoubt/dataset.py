@@ -58,6 +58,14 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict(T.TypedDict):
     mimic_cxr_datapoint_metadata: mimic_cxr.MimicCxrBinaryQADatapoint
 
 
+class MimicCxrLlavaModelInputBatchDict(T.TypedDict):
+    batch_llava_model_input_dict: LlavaModelInputDict
+    batch_attention_mask: torch.Tensor
+    batch_labels: torch.Tensor | list[bool] | list[None]
+    batch_prompts: list[str]
+    batch_mimic_cxr_datapoint_metadata: list[mimic_cxr.MimicCxrBinaryQADatapoint]
+
+
 # data interface coupled with loading conversion logic
 def _load_image(
     image_path: Path,
@@ -251,12 +259,10 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
         )
 
 
-# TODO: Prompt creation logic for random binary question asking + label assignment
-
-
 def prompted_mimic_cxr_llava_model_input_collate_fn(
-    batch: list[PromptedMimicCxrLlavaModelInputDatapointDict], padding_value
-) -> tuple[LlavaModelInputDict, torch.Tensor | list, list[str], list[mimic_cxr.MimicCxrDatapoint]]:
+    batch: list[PromptedMimicCxrLlavaModelInputDatapointDict],
+    padding_tokenizer: PreTrainedTokenizer,
+) -> MimicCxrLlavaModelInputBatchDict:
     """
     Custom collate function to pad text sequences and stack images.
     """
@@ -276,28 +282,31 @@ def prompted_mimic_cxr_llava_model_input_collate_fn(
         torch.as_tensor(sample["text_prompt_input_ids"]).clone().detach()
         for sample in llava_model_inputs
     ]
+    images = torch.stack([torch.as_tensor(sample["images"]) for sample in llava_model_inputs])
 
-    images = torch.stack(
-        [torch.as_tensor(sample["images"]) for sample in llava_model_inputs]
-    )  # Stack images
+    padded_text_inputs_dict = padding_tokenizer.pad(
+        encoded_inputs={"input_ids": text_inputs},
+        padding=True,
+        max_length=None,
+        return_tensors="pt",
+    )
+    text_inputs = padded_text_inputs_dict["input_ids"]
+    attention_mask = padded_text_inputs_dict["attention_mask"]
 
-    # Pad text sequences to the same length
-    text_inputs = torch_pad_sequence(text_inputs, batch_first=True, padding_value=padding_value)
-
-    # Reconstruct llava_model_input with padded sequences
     batch_llava_model_inputs = LlavaModelInputDict(text_prompt_input_ids=text_inputs, images=images)
-
-    # Collect labels as a tensor (or list if they are None)
     batch_labels = (
         torch.tensor(labels, dtype=torch.float32) if labels[0] is not None else list(labels)
     )
-
-    # Metadata remains unchanged as a list
     batch_metadata = list(mimic_cxr_datapoint_metadatas)
     batch_prompts = list(prompts)
 
-    # TODO Return a dictionary instead of a tuple
-    return batch_llava_model_inputs, batch_labels, batch_prompts, batch_metadata
+    return MimicCxrLlavaModelInputBatchDict(
+        batch_llava_model_input_dict=batch_llava_model_inputs,
+        batch_attention_mask=attention_mask,
+        batch_labels=batch_labels,
+        batch_prompts=batch_prompts,
+        batch_mimic_cxr_datapoint_metadata=batch_metadata,
+    )
 
 
 def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
@@ -319,17 +328,15 @@ def get_mimic_cxr_llava_model_input_dataloader(
         PromptedMimicCxrLlavaModelInputDataset | BinaryQAPromptedMimicCxrLlavaModelInputDataset
     ),
     batch_size: int,
-    padding_value: int,
-    num_workers: int,
+    padding_tokenizer: PreTrainedTokenizer,
+    num_workers: T.Optional[int] = None,
 ) -> DataLoader:
     return DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn(
-            x, padding_value=padding_value
-        ),  # vicuna/llama does not have a padding token, use the EOS token instead
+        collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn(x, padding_tokenizer),
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=num_workers if num_workers else 0,
         pin_memory=True,
         drop_last=True,
         persistent_workers=True,
@@ -337,32 +344,32 @@ def get_mimic_cxr_llava_model_input_dataloader(
 
 
 # Probably retire this function
-def create_dataset_generator_from_mimic_cxr_dataset_df(
-    mimic_cxr_df: pd.DataFrame,
-    prompter: T.Callable[[str], str],
-    tokenizer: PreTrainedTokenizer,
-    device: torch.device,
-    image_transform: T.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer,
-    shuffle: bool = False,
-    # TODO add split support
-) -> T.Callable[[], T.Iterator[T.Dict[str, torch.Tensor]]]:
-    """Returns a generator function that yields model inputs"""
-    indices = list(range(len(mimic_cxr_df)))
+# def create_dataset_generator_from_mimic_cxr_dataset_df(
+#     mimic_cxr_df: pd.DataFrame,
+#     prompter: T.Callable[[str], str],
+#     tokenizer: PreTrainedTokenizer,
+#     device: torch.device,
+#     image_transform: T.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer,
+#     shuffle: bool = False,
+#     # TODO add split support
+# ) -> T.Callable[[], T.Iterator[T.Dict[str, torch.Tensor]]]:
+#     """Returns a generator function that yields model inputs"""
+#     indices = list(range(len(mimic_cxr_df)))
 
-    def dataset_generator() -> T.Iterator[T.Dict[str, torch.Tensor]]:
-        if shuffle:
-            random.shuffle(indices, random.seed(42))
+#     def dataset_generator() -> T.Iterator[T.Dict[str, torch.Tensor]]:
+#         if shuffle:
+#             random.shuffle(indices, random.seed(42))
 
-        for idx in indices:
-            row = mimic_cxr_df.iloc[idx]
-            mimic_cxr_datapoint = _create_mimic_cxr_datapoint_from_mimic_cxr_dataset_df_row(row)
-            yield asdict(
-                move_llava_model_input_to_device(
-                    _create_llava_model_input_from_mimic_cxr_datapoint(
-                        mimic_cxr_datapoint, tokenizer, prompter, image_transform
-                    ),
-                    device=device,
-                )
-            )
+#         for idx in indices:
+#             row = mimic_cxr_df.iloc[idx]
+#             mimic_cxr_datapoint = _create_mimic_cxr_datapoint_from_mimic_cxr_dataset_df_row(row)
+#             yield asdict(
+#                 move_llava_model_input_to_device(
+#                     _create_llava_model_input_from_mimic_cxr_datapoint(
+#                         mimic_cxr_datapoint, tokenizer, prompter, image_transform
+#                     ),
+#                     device=device,
+#                 )
+#             )
 
-    return dataset_generator
+#     return dataset_generator
