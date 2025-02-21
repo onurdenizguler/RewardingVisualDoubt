@@ -21,12 +21,20 @@ from peft import LoraModel, PeftModel
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
 from trl import models as trl_models
 import peft
+import trl
 
 from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
+
+from RewardingVisualDoubt import shared
 
 LLAVA_BASE_MODEL_NAME = "liuhaotian/llava-v1.5-7b"
 LLAVA_LORA_ADAPTER = "llava-v1.5-7b-task-lora_radialog_instruct_llava_biovil_unfrozen_2e-5_5epochs_v5_checkpoint-21000"
 FINETUNED_LLAVA_REPO_ID = "ChantalPellegrini/RaDialog-interactive-radiology-report-generation"
+RADIALOG_LORA_WEIGHTS_PATH = (
+    "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/RaDialog_adapter_model.bin"
+)
+
+Precision = t.Literal["16bit", "8bit", "4bit"]
 
 ##################### HELPER FUNCTIONS #####################
 
@@ -36,7 +44,7 @@ def _get_hf_model_path(repo_id) -> Path:
 
 
 def _resolve_model_configuration(
-    kwargs, device: str, device_map: str, load_8bit: bool, load_4bit: bool
+    kwargs, device: str, device_map: str, precision: Precision
 ) -> dict:
 
     kwargs = {"device_map": device_map, **kwargs}
@@ -44,9 +52,13 @@ def _resolve_model_configuration(
     if device != "cuda":
         kwargs["device_map"] = {"": device}
 
-    if load_8bit:
+    if precision == "16bit":
+        kwargs["torch_dtype"] = torch.bfloat16
+    elif precision == "8bit":
+        print("Quantization type: 8bit")
         kwargs["load_in_8bit"] = True
-    elif load_4bit:
+    elif precision == "4bit":
+        print("Quantization type: 4bit")
         kwargs["load_in_4bit"] = True
         kwargs["quantization_config"] = transformers.BitsAndBytesConfig(
             load_in_4bit=True,
@@ -54,11 +66,7 @@ def _resolve_model_configuration(
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
         )
-    else:
-        # kwargs['torch_dtype'] = torch.float16
-        kwargs["torch_dtype"] = torch.bfloat16
 
-    kwargs["torch_dtype"] = torch.bfloat16
     return kwargs
 
 
@@ -82,7 +90,23 @@ def _get_finetuned_llava_config(model_path: Path) -> LlavaConfig:
 
 
 def _extract_lora_config_from_model(model: LlavaLlamaForCausalLM) -> peft.LoraConfig:
-    return model.peft_config["default"]
+    return (model.peft_config["default"],)
+
+
+def _load_lora_weights_in_state_dict_format_for_radialog(
+    lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+) -> dict[str, torch.Tensor]:
+
+    adapter_state_dict = torch.load(lora_weights_path, map_location="cpu")
+    mapped_state_dict = {}
+
+    for k, v in adapter_state_dict.items():
+        # Replace the prefix to match the loaded model structure
+        new_key = k.replace("base_model.", "pretrained_model.base_model.")
+        new_key = new_key.split(".weight")[0] + ".default" + ".weight"
+        mapped_state_dict[new_key] = v
+
+    return mapped_state_dict
 
 
 ##################### IMAGE INPUT SUPPORT #####################
@@ -108,6 +132,75 @@ def _modify_model_for_image_input(
     model: llava.model.LlavaLlamaForCausalLM, tokenizer_length: int
 ) -> llava.model.LlavaLlamaForCausalLM:
     model.resize_token_embeddings(tokenizer_length)
+    return model
+
+
+##################### LOAD AND MERGE WEIGHTS #####################
+
+
+def _load_base_LlavaLamaForCausalLM_model(
+    model_base: str, model_path: Path, **kwargs
+) -> llava.model.LlavaLlamaForCausalLM:
+
+    print("Model base: ", model_base)
+
+    print("Loading LLaVA from base model...")
+    model = t.cast(
+        transformers.LlamaForCausalLM,
+        llava.model.LlavaLlamaForCausalLM.from_pretrained(
+            pretrained_model_name_or_path=model_base,
+            low_cpu_mem_usage=True,
+            config=_get_finetuned_llava_config(model_path=model_path),
+            **kwargs,
+        ),
+    )
+
+    token_num, tokem_dim = model.lm_head.out_features, model.lm_head.in_features
+    if model.lm_head.weight.shape[0] != token_num:
+        model.lm_head.weight = torch.nn.Parameter(
+            torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype)
+        )
+        model.model.embed_tokens.weight = torch.nn.Parameter(
+            torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype)
+        )
+
+    if model.config.mm_vision_tower == "biovil":
+        # reset mm_projector as wrong shape is loaded from pretrained base model
+        model.model.mm_projector = build_vision_projector(model.config)
+        model.model.mm_projector.to(device=model.device, dtype=model.dtype)
+
+    return t.cast(llava.model.LlavaLlamaForCausalLM, model)
+
+
+def _load_additional_non_lora_llava_weights(
+    model: transformers.LlamaForCausalLM, model_path: Path
+) -> transformers.LlamaForCausalLM:
+
+    print("Loading additional LLaVA weights...")
+    non_lora_trainables = _get_non_lora_trainables(model_path)
+    model.load_state_dict(non_lora_trainables, strict=False)
+    return model
+
+
+def _load_lora_weights(
+    model: transformers.LlamaForCausalLM, model_path: Path, is_lora_trainable: bool
+) -> llava.model.LlavaLlamaForCausalLM:
+    # TODO inaccurate typing logic here! figure it out later
+    print("Loading LoRA weights...")
+    model = t.cast(
+        llava.model.LlavaLlamaForCausalLM,
+        PeftModel.from_pretrained(model, model_path, is_trainable=is_lora_trainable),
+    )  # TODO this returns a peft.peft_model.PeftModelForCausalLM
+    if not is_lora_trainable:
+        print("Merging LoRA weights...")
+        model = model.merge_and_unload()  # TODO this returns a llava.model.LlavaLlamaForCausalLM
+    print(
+        "Model is loaded with {LoRA_weights_status} LoRA weights...".format(
+            LoRA_weights_status=(
+                "merged and unloaded" if not is_lora_trainable else "unmerged and trainable"
+            )
+        )
+    )
     return model
 
 
@@ -153,75 +246,6 @@ def _merge_llm_with_vision_tower(
     return model
 
 
-##################### LOAD WEIGHTS #####################
-
-
-def _load_base_LlavaLamaForCausalLM_model(
-    model_base: str, model_path: Path, **kwargs
-) -> llava.model.LlavaLlamaForCausalLM:
-
-    print("Model base: ", model_base)
-
-    print("Loading LLaVA from base model...")
-    model = t.cast(
-        transformers.LlamaForCausalLM,
-        llava.model.LlavaLlamaForCausalLM.from_pretrained(
-            pretrained_model_name_or_path=model_base,
-            low_cpu_mem_usage=True,
-            config=_get_finetuned_llava_config(model_path=model_path),
-            **kwargs
-        ),
-    )
-
-    token_num, tokem_dim = model.lm_head.out_features, model.lm_head.in_features
-    if model.lm_head.weight.shape[0] != token_num:
-        model.lm_head.weight = torch.nn.Parameter(
-            torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype)
-        )
-        model.model.embed_tokens.weight = torch.nn.Parameter(
-            torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype)
-        )
-
-    if model.config.mm_vision_tower == "biovil":
-        # reset mm_projector as wrong shape is loaded from pretrained base model
-        model.model.mm_projector = build_vision_projector(model.config)
-        model.model.mm_projector.to(device=model.device, dtype=model.dtype)
-
-    return t.cast(llava.model.LlavaLlamaForCausalLM, model)
-
-
-def _load_additional_non_lora_llava_weights(
-    model: transformers.LlamaForCausalLM, model_path: Path
-) -> transformers.LlamaForCausalLM:
-
-    print("Loading additional LLaVA weights...")
-    non_lora_trainables = _get_non_lora_trainables(model_path)
-    model.load_state_dict(non_lora_trainables, strict=False)
-    return model
-
-
-def _load_lora_weights(
-    model: transformers.LlamaForCausalLM, model_path: Path, is_lora_trainable: bool
-) -> llava.model.LlavaLlamaForCausalLM:
-    # TODO inaccurate typing logic here! figure it out later
-    print("Loading LoRA weights...")
-    model = t.cast(
-        llava.model.LlavaLlamaForCausalLM,
-        PeftModel.from_pretrained(model, model_path, is_trainable=is_lora_trainable),
-    )
-    if not is_lora_trainable:
-        print("Merging LoRA weights...")
-        model = model.merge_and_unload()
-    print(
-        "Model is loaded with {LoRA_weights_status} LoRA weights...".format(
-            LoRA_weights_status=(
-                "merged and unloaded" if not is_lora_trainable else "unmerged and trainable"
-            )
-        )
-    )
-    return model
-
-
 ##################### PREPARE FOR INFERENCE OR TRAINING #####################
 
 
@@ -242,12 +266,14 @@ def _freeze_all_non_lora_params(
     return model
 
 
-##################### ENTRY POINTS #####################
+##################### TOKENIZER AND IMAGE PROCESSOR #####################
 
 
 def load_pretrained_text_only_llava_tokenizer(model_base: str) -> transformers.LlamaTokenizer:
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_base, use_fast=False)
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+    tokenizer.pad_token_id = (
+        tokenizer.eos_token_id
+    )  # vicuna/llama does not have a padding token, use the EOS token instead
     assert isinstance(tokenizer, transformers.LlamaTokenizer)
     return tokenizer
 
@@ -255,7 +281,9 @@ def load_pretrained_text_only_llava_tokenizer(model_base: str) -> transformers.L
 def load_pretrained_llava_tokenizer_with_image_support(
     model_base: str,
 ) -> transformers.LlamaTokenizer:
-    tokenizer = transformers.AutoTokenizer.from_pretrained(model_base, use_fast=False)
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_base, use_fast=False
+    )  # vicuna/llama does not have a padding token, use the EOS token instead
     assert isinstance(tokenizer, transformers.LlamaTokenizer)
     tokenizer = _modify_tokenizer_for_image_input(tokenizer)
     tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -276,26 +304,41 @@ def get_model_context_length(model: llava.model.LlavaLlamaForCausalLM) -> int:
     return context_len
 
 
+##################### MODEL LOADING ENTRY POINTS #####################
+
+
 def load_pretrained_llava_model(
     model_path: Path = _get_hf_model_path(repo_id=FINETUNED_LLAVA_REPO_ID),
     model_base=LLAVA_BASE_MODEL_NAME,
-    load_8bit: bool = False,
-    load_4bit: bool = False,
     device_map="auto",
-    device="cuda",
+    device=shared.torch_devices.cuda.value,
+    precision: Precision = "16bit",
+    skip_lora_adapters: bool = False,
     is_lora_trainable: bool = False,
-    **kwargs
+    **kwargs,
 ) -> llava.model.LlavaLlamaForCausalLM:
-
+    """
+    Load the pretrained LLaVA model with the option to load LoRA weights and quantized weights.
+    args:
+        model_path: Path to the model checkpoint
+        model_base: Base model name
+        device_map: Device map
+        device: Device  (default: "cuda")
+        is_lora_trainable: Whether to load LoRA weights as trainable (default: False)
+        precision: Precision of the model (default: "16bit")
+        skip_lora_adapters: Whether to skip loading LoRA adapters (default: False)
+    """
     print(
         "Loading model in {trainablity} mode...".format(
             trainablity="trainable" if is_lora_trainable else "non-trainable"
         )
     )
-    kwargs = _resolve_model_configuration(kwargs, device, device_map, load_8bit, load_4bit)
+
+    kwargs = _resolve_model_configuration(kwargs, device, device_map, precision)
     model = _load_base_LlavaLamaForCausalLM_model(model_base, model_path, **kwargs)
     model = _load_additional_non_lora_llava_weights(model, model_path)
-    model = _load_lora_weights(model, model_path, is_lora_trainable=is_lora_trainable)
+    if not skip_lora_adapters:
+        model = _load_lora_weights(model, model_path, is_lora_trainable=is_lora_trainable)
 
     # Merge model with the vision tower
     assert model.config.mm_vision_tower == "biovil"
@@ -321,4 +364,59 @@ def add_value_head_to_LlavaLlamaForCausalLM_model(
     return AutoModelForCausalLMWithValueHead.from_pretrained(model)
 
 
-# TODO freeze all params BUT lora (upgrade to is_lora_trainable)
+def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalLM_model(
+    model: llava.model.LlavaLlamaForCausalLM,
+    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
+
+    lora_config = peft.LoraConfig(
+        r=128,
+        target_modules=[
+            "gate_proj",
+            "v_proj",
+            "o_proj",
+            "k_proj",
+            "down_proj",
+            "up_proj",
+            "q_proj",
+        ],
+        lora_alpha=256,
+        lora_dropout=0.05,
+        fan_in_fan_out=False,
+        bias="none",
+        modules_to_save=None,
+        init_lora_weights=False,  # True,
+        layers_to_transform=None,
+        layers_pattern=None,
+        task_type="CAUSAL_LM",
+    )
+
+    print("Adding pretrained RaDialog LoRA adapters and value head to the model...")
+    trl_lora_model = t.cast(
+        trl.models.modeling_value_head.AutoModelForCausalLMWithValueHead,
+        AutoModelForCausalLMWithValueHead.from_pretrained(model, peft_config=lora_config),
+    )
+
+    radialog_mapped_lora_state_dict = _load_lora_weights_in_state_dict_format_for_radialog(
+        lora_weights_path=radialog_lora_weights_path
+    )
+
+    missing_keys, unexpected_keys = trl_lora_model.load_state_dict(
+        radialog_mapped_lora_state_dict, strict=False
+    )
+    assert unexpected_keys == [], "Some LoRA weights could not be mapped to the RaDialog model"
+
+    return trl_lora_model
+
+
+##################### AGGREGATE ENTRY POINTS #####################
+
+
+def load_pretrained_llava_model_for_ppo_training() -> (
+    trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead
+):
+    model = load_pretrained_llava_model(skip_lora_adapters=True)
+    model = add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalLM_model(
+        model
+    )
+    return model
