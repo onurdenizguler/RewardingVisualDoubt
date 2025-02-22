@@ -115,7 +115,7 @@ def _load_lora_weights_in_state_dict_format_for_radialog(
 def _modify_tokenizer_for_image_input(
     tokenizer: transformers.LlamaTokenizer,
     mm_use_im_start_end: bool = False,
-    mm_use_im_patch_token: bool = True,
+    mm_use_im_patch_token: bool = False,
 ) -> transformers.LlamaTokenizer:
     # mm_use_im_start_end = getattr(model.config, "mm_use_im_start_end", False)
     # mm_use_im_patch_token = getattr(model.config, "mm_use_im_patch_token", True)
@@ -311,7 +311,7 @@ def load_pretrained_llava_model(
     model_path: Path = _get_hf_model_path(repo_id=FINETUNED_LLAVA_REPO_ID),
     model_base=LLAVA_BASE_MODEL_NAME,
     device_map="auto",
-    device=shared.torch_devices.cuda.value,
+    device: str = shared.torch_devices.cuda.value,
     precision: Precision = "16bit",
     skip_lora_adapters: bool = False,
     is_lora_trainable: bool = False,
@@ -412,10 +412,10 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
 ##################### AGGREGATE ENTRY POINTS #####################
 
 
-def load_pretrained_llava_model_for_ppo_training() -> (
-    trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead
-):
-    model = load_pretrained_llava_model(skip_lora_adapters=True)
+def load_pretrained_llava_model_for_ppo_training(
+    device_str: str = shared.torch_devices.cuda.value,
+) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
+    model = load_pretrained_llava_model(skip_lora_adapters=True, device=device_str)
     model = add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalLM_model(
         model
     )
