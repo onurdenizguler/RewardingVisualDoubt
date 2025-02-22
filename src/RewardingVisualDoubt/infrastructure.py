@@ -1,4 +1,11 @@
 import torch
+import warnings
+
+
+def supress_known_warnings():
+    warnings.filterwarnings(
+        "ignore", message="`resume_download` is deprecated and will be removed in version 1.0.0"
+    )
 
 
 def make_ipython_reactive_to_changing_codebase():
