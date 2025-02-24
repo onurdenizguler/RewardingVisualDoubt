@@ -25,7 +25,7 @@ bfloat16_dtype: torch.dtype = torch.bfloat16
 
 class DatasetSplit(enum.Enum):
     TRAIN = "train"
-    VALIDATION = "validation"
+    VALIDATION = "validate"
     TEST = "test"
 
 
@@ -336,7 +336,7 @@ def get_mimic_cxr_llava_model_input_dataloader(
         batch_size=batch_size,
         collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn(x, padding_tokenizer),
         shuffle=False,
-        num_workers=num_workers if num_workers else 0,
+        num_workers=num_workers if num_workers else 0,  # TODO let torch decide!
         pin_memory=True,
         drop_last=True,
         persistent_workers=True,
