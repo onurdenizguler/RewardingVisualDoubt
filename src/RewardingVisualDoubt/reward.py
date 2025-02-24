@@ -1,11 +1,3 @@
-# TEMPLATE PUNISHMENTS
-# check if the confidence is an int
-# check if the confidence is between 0 and 10
-# check if the confidence and reward key exist
-
-# CONFIDENCE ESTIMATE PUNISHMENTS
-
-
 import math
 
 MAX_REWARD = -0.0010005003335835344

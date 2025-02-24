@@ -8,37 +8,6 @@ TOKEN_INDEX_OF_THE_WORD_IMAGE = (
 )
 
 
-# def remove_padding_and_append(input_ids, new_input_ids_list, pad_token_id=0):
-#     """
-#     Args:
-#         input_ids (torch.Tensor): [batch_size, seq_len] input tensor with padding.
-#         new_input_ids_list (List[torch.Tensor]): List of tensors to append to each sequence.
-#         pad_token_id (int): The token ID used for padding.
-
-#     Returns:
-#         torch.Tensor: Padded tensor after appending new input IDs.
-#     """
-#     batch_size, seq_len = input_ids.size()
-#     processed_seqs = []
-
-#     for i in range(batch_size):
-#         # Get the sequence without padding
-#         seq = input_ids[i]
-#         valid_len = (seq != pad_token_id).sum()  # Count non-pad tokens
-#         trimmed_seq = seq[:valid_len]
-
-#         # Append new input_ids
-#         new_ids = new_input_ids_list[i]  # Should be a tensor
-#         combined_seq = torch.cat([trimmed_seq, new_ids], dim=0)
-
-#         processed_seqs.append(combined_seq)
-
-#     # Pad sequences to the same length
-#     padded_seqs = pad_sequence(processed_seqs, batch_first=True, padding_value=pad_token_id)
-
-#     return padded_seqs
-
-
 def remove_padding(tensor, pad_token) -> torch.Tensor:
     # TODO: better alternative is output = generation[(1 - mask).sum() :]  # remove padding
     start_idx = 0
