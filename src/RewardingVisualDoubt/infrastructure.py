@@ -1,5 +1,6 @@
-import torch
 import warnings
+
+import torch
 
 
 def supress_known_warnings():

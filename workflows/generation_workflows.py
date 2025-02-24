@@ -6,13 +6,16 @@ if ipython_client:
     ipython_client.run_line_magic(magic_name="load_ext", line="autoreload")
     ipython_client.run_line_magic(magic_name="autoreload", line="2")
 
+import typing as t
+
 import torch
 from datasets import IterableDataset
 from LLAVA_Biovil.llava.conversation import SeparatorStyle, conv_vicuna_v1
 from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
 from torch.utils.data import DataLoader
-import typing as t
-from RewardingVisualDoubt import dataset, inference, mimic_cxr, prompter, shared, vllm
+
+from RewardingVisualDoubt import (dataset, inference, mimic_cxr, prompter,
+                                  shared, vllm)
 
 STOP_STR = (
     conv_vicuna_v1.copy().sep
