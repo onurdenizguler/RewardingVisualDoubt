@@ -3,6 +3,7 @@ import typing as t
 from pathlib import Path
 from re import L
 
+import bitsandbytes
 import peft
 import torch
 import transformers
@@ -10,16 +11,16 @@ import trl
 from huggingface_hub import snapshot_download
 from LLAVA_Biovil import llava
 from LLAVA_Biovil.biovil_t.model import ImageModel
-from LLAVA_Biovil.biovil_t.pretrained import \
-    _download_biovil_t_image_model_weights
+from LLAVA_Biovil.biovil_t.pretrained import _download_biovil_t_image_model_weights
 from LLAVA_Biovil.biovil_t.types import ImageEncoderType
 from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
-from LLAVA_Biovil.llava.constants import (DEFAULT_IM_END_TOKEN,
-                                          DEFAULT_IM_START_TOKEN,
-                                          DEFAULT_IMAGE_PATCH_TOKEN)
+from LLAVA_Biovil.llava.constants import (
+    DEFAULT_IM_END_TOKEN,
+    DEFAULT_IM_START_TOKEN,
+    DEFAULT_IMAGE_PATCH_TOKEN,
+)
 from LLAVA_Biovil.llava.model import LlavaConfig
-from LLAVA_Biovil.llava.model.multimodal_projector.builder import \
-    build_vision_projector
+from LLAVA_Biovil.llava.model.multimodal_projector.builder import build_vision_projector
 from peft import LoraModel, PeftModel
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
 from trl import models as trl_models
@@ -52,12 +53,14 @@ def _resolve_model_configuration(
         kwargs["device_map"] = {"": device}
 
     if precision == "16bit":
+        print("Precision: 16bit (non-quantized)")
         kwargs["torch_dtype"] = torch.bfloat16
     elif precision == "8bit":
-        print("Quantization type: 8bit")
+        print("Precision: 8bit quantized")
         kwargs["load_in_8bit"] = True
+        kwargs["torch_dtype"] = torch.bfloat16
     elif precision == "4bit":
-        print("Quantization type: 4bit")
+        print("Precision: 4bit quantized")
         kwargs["load_in_4bit"] = True
         kwargs["quantization_config"] = transformers.BitsAndBytesConfig(
             load_in_4bit=True,
@@ -65,6 +68,7 @@ def _resolve_model_configuration(
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
         )
+        kwargs["torch_dtype"] = torch.bfloat16
 
     return kwargs
 
@@ -368,6 +372,10 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
     radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
 ) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
 
+    is_model_quantized: bool = any(
+        isinstance(m, bitsandbytes.nn.Linear4bit) for m in model.modules()
+    ) or any(isinstance(m, bitsandbytes.nn.Linear8bitLt) for m in model.modules())
+
     lora_config = peft.LoraConfig(
         r=128,
         target_modules=[
@@ -390,10 +398,11 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
         task_type="CAUSAL_LM",
     )
 
+    if is_model_quantized:
+        model = peft.prepare_model_for_kbit_training(model)
     print("Adding pretrained RaDialog LoRA adapters and value head to the model...")
-    trl_lora_model = t.cast(
-        trl.models.modeling_value_head.AutoModelForCausalLMWithValueHead,
-        AutoModelForCausalLMWithValueHead.from_pretrained(model, peft_config=lora_config),
+    trl_lora_model: trl.models.modeling_value_head.AutoModelForCausalLMWithValueHead = (
+        AutoModelForCausalLMWithValueHead.from_pretrained(model, peft_config=lora_config)
     )
 
     radialog_mapped_lora_state_dict = _load_lora_weights_in_state_dict_format_for_radialog(
@@ -405,6 +414,15 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
     )
     assert unexpected_keys == [], "Some LoRA weights could not be mapped to the RaDialog model"
 
+    if is_model_quantized:
+        # Cast vision related modules back to bfloat16, as lora loading messes them about to float32
+        trl_lora_model.pretrained_model.base_model.model.model.vision_tower.to(
+            device=torch.device(shared.torch_devices.cuda.value), dtype=torch.bfloat16
+        )
+        trl_lora_model.pretrained_model.base_model.model.model.mm_projector.to(
+            device=torch.device(shared.torch_devices.cuda.value), dtype=torch.bfloat16
+        )
+
     return trl_lora_model
 
 
@@ -412,9 +430,11 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
 
 
 def load_pretrained_llava_model_for_ppo_training(
-    device_str: str = shared.torch_devices.cuda.value,
+    device_str: str = shared.torch_devices.cuda.value, precision: Precision = "16bit"
 ) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
-    model = load_pretrained_llava_model(skip_lora_adapters=True, device=device_str)
+    model = load_pretrained_llava_model(
+        skip_lora_adapters=True, device=device_str, precision=precision
+    )
     model = add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalLM_model(
         model
     )
