@@ -53,7 +53,7 @@ def radialog_binary_qa_ppo_training_step(
 ):
 
     ######### 5.1 Unpack the batch #########
-    batch = t.cast(dataset.MimicCxrLlavaModelInputBatchDict, batch)
+    batch: dataset.MimicCxrLlavaModelInputBatchDict = batch
     batch_llava_model_input_dict = batch["batch_llava_model_input_dict"]
     batch_llava_model_input_dict = dataset.move_llava_model_input_dict_to_device(
         batch_llava_model_input_dict, device
@@ -103,7 +103,7 @@ def radialog_binary_qa_ppo_training_step(
     ######### 5.4 Generate the confidences #########
     model.train()
     generated_confidences_ids = ppo_trainer.generate(
-        prompt_and_generated_answers_with_confidence_requests_ids,  # ppo_trainer.generate() method admits list of tensors, not a batch tensor unfortunately
+        prompt_and_generated_answers_with_confidence_requests_ids,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
         images=images,
         return_prompt=False,
         **generation_kwargs_ppo,
