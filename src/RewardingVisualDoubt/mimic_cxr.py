@@ -14,6 +14,7 @@ MIMIC_CXR_SPLIT_CSV_PATH = "/home/data/DIVA/mimic/mimic-cxr-jpg/2.0.0/mimic-cxr-
 MIMIC_CXR_FINDINGS_CSV_PATH = (
     "/home/data/DIVA/mimic/mimic-cxr-jpg/2.0.0/mimic-cxr-2.0.0-chexpert.csv"
 )
+CACHE_DIR = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/.cache"
 
 
 class ChexpertFinding(enum.Enum):
@@ -110,10 +111,11 @@ def create_mimic_cxr_dataset_df(
     mimic_cxr_split_csv_path: str = MIMIC_CXR_SPLIT_CSV_PATH,
     mimic_cxr_findings_csv_path: str = MIMIC_CXR_FINDINGS_CSV_PATH,
 ) -> pd.DataFrame:
-    """
-    Create a Hugging Face dataset from the X-ray images and their labels
-    Using an optimized directory traversal approach
-    """
+
+    # check if df pickle exists in cache dir
+    if os.path.exists(os.path.join(CACHE_DIR, "mimic_cxr_df.pkl")):
+        print("Loading mimic_cxr_df from cache")
+        return pd.read_pickle(os.path.join(CACHE_DIR, "mimic_cxr_df.pkl"))
 
     split_df = pd.read_csv(mimic_cxr_split_csv_path)
     findings_df = pd.read_csv(mimic_cxr_findings_csv_path)
@@ -122,6 +124,10 @@ def create_mimic_cxr_dataset_df(
     )
     findings_and_split_df = _resolve_img_path(findings_and_split_df)
 
+    # save df to cache dir
+    print("Saving mimic_cxr_df to cache")
+    findings_and_split_df.to_pickle(os.path.join(CACHE_DIR, "mimic_cxr_df.pkl"))
+
     return findings_and_split_df
 
 
@@ -129,6 +135,11 @@ def create_balanced_binary_qa_mimic_cxr_dataset_df(
     mimic_cxr_df: pd.DataFrame,
 ) -> pd.DataFrame:
     # TODO admit split data!
+
+    # check if df pickle exists in cache dir
+    if os.path.exists(os.path.join(CACHE_DIR, "balanced_binary_qa_mimic_cxr_df.pkl")):
+        print("Loading balanced_binary_qa_mimic_cxr_df from cache")
+        return pd.read_pickle(os.path.join(CACHE_DIR, "balanced_binary_qa_mimic_cxr_df.pkl"))
 
     disease_cols = [disease.value for disease in ChexpertFinding]
     disease_cols.pop(disease_cols.index("No Finding"))
@@ -171,6 +182,12 @@ def create_balanced_binary_qa_mimic_cxr_dataset_df(
     balanced_df_oversampled = pd.concat(balanced_dfs).reset_index(drop=True)
     balanced_df_oversampled = balanced_df_oversampled.sample(frac=1, random_state=42).reset_index(
         drop=True
+    )
+
+    # save df to cache dir
+    print("Saving balanced_binary_qa_mimic_cxr_df to cache")
+    balanced_df_oversampled.to_pickle(
+        os.path.join(CACHE_DIR, "balanced_binary_qa_mimic_cxr_df.pkl")
     )
 
     return balanced_df_oversampled
