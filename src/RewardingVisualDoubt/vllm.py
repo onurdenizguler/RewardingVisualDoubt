@@ -98,17 +98,21 @@ def _extract_lora_config_from_model(model: LlavaLlamaForCausalLM) -> peft.LoraCo
 
 def _load_lora_weights_in_state_dict_format_for_radialog(
     lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+    is_target_model_with_value_head: bool = True,
 ) -> dict[str, torch.Tensor]:
 
     adapter_state_dict = torch.load(lora_weights_path, map_location="cpu")
     mapped_state_dict = {}
-
-    for k, v in adapter_state_dict.items():
-        # Replace the prefix to match the loaded model structure
-        new_key = k.replace("base_model.", "pretrained_model.base_model.")
-        new_key = new_key.split(".weight")[0] + ".default" + ".weight"
-        mapped_state_dict[new_key] = v
-
+    if is_target_model_with_value_head:
+        for k, v in adapter_state_dict.items():
+            # Replace the prefix to match the loaded model structure
+            new_key = k.replace("base_model.", "pretrained_model.base_model.")
+            new_key = new_key.split(".weight")[0] + ".default" + ".weight"
+            mapped_state_dict[new_key] = v
+    else:
+        for k, v in adapter_state_dict.items():
+            new_key = k.split(".weight")[0] + ".default" + ".weight"
+            mapped_state_dict[new_key] = v
     return mapped_state_dict
 
 
@@ -367,16 +371,8 @@ def add_value_head_to_LlavaLlamaForCausalLM_model(
     return AutoModelForCausalLMWithValueHead.from_pretrained(model)
 
 
-def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalLM_model(
-    model: llava.model.LlavaLlamaForCausalLM,
-    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
-) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
-
-    is_model_quantized: bool = any(
-        isinstance(m, bitsandbytes.nn.Linear4bit) for m in model.modules()
-    ) or any(isinstance(m, bitsandbytes.nn.Linear8bitLt) for m in model.modules())
-
-    lora_config = peft.LoraConfig(
+def _get_lora_config() -> peft.LoraConfig:
+    return peft.LoraConfig(
         r=128,
         target_modules=[
             "gate_proj",
@@ -398,6 +394,56 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
         task_type="CAUSAL_LM",
     )
 
+
+def add_pretrained_RaDialog_lora_adapters_to_LlavaLlamaForCausalLM_model(
+    model: llava.model.LlavaLlamaForCausalLM,
+    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+) -> peft.PeftModel:
+
+    is_model_quantized: bool = any(
+        isinstance(m, bitsandbytes.nn.Linear4bit) for m in model.modules()
+    ) or any(isinstance(m, bitsandbytes.nn.Linear8bitLt) for m in model.modules())
+
+    if is_model_quantized:
+        model = t.cast(
+            llava.model.LlavaLlamaForCausalLM, peft.prepare_model_for_kbit_training(model)
+        )
+
+    lora_config = _get_lora_config()
+    print("Adding pretrained RaDialog LoRA adapters to the model...")
+    lora_model = peft.get_peft_model(model, lora_config)
+    radialog_mapped_lora_state_dict = _load_lora_weights_in_state_dict_format_for_radialog(
+        lora_weights_path=radialog_lora_weights_path, is_target_model_with_value_head=False
+    )
+
+    missing_keys, unexpected_keys = lora_model.load_state_dict(
+        radialog_mapped_lora_state_dict, strict=False
+    )
+    assert unexpected_keys == [], "Some LoRA weights could not be mapped to the RaDialog model"
+
+    if is_model_quantized:
+        # Cast vision related modules back to bfloat16, as lora loading messes them about to float32
+        lora_model.base_model.model.model.vision_tower.to(
+            device=torch.device(shared.torch_devices.cuda.value), dtype=torch.bfloat16
+        )
+        lora_model.base_model.model.model.mm_projector.to(
+            device=torch.device(shared.torch_devices.cuda.value), dtype=torch.bfloat16
+        )
+
+    return lora_model
+
+
+def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalLM_model(
+    model: llava.model.LlavaLlamaForCausalLM,
+    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
+
+    is_model_quantized: bool = any(
+        isinstance(m, bitsandbytes.nn.Linear4bit) for m in model.modules()
+    ) or any(isinstance(m, bitsandbytes.nn.Linear8bitLt) for m in model.modules())
+
+    lora_config = _get_lora_config()
+
     if is_model_quantized:
         model = peft.prepare_model_for_kbit_training(model)
     print("Adding pretrained RaDialog LoRA adapters and value head to the model...")
@@ -406,7 +452,7 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
     )
 
     radialog_mapped_lora_state_dict = _load_lora_weights_in_state_dict_format_for_radialog(
-        lora_weights_path=radialog_lora_weights_path
+        lora_weights_path=radialog_lora_weights_path, is_target_model_with_value_head=True
     )
 
     missing_keys, unexpected_keys = trl_lora_model.load_state_dict(
@@ -427,6 +473,16 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
 
 
 ##################### AGGREGATE ENTRY POINTS #####################
+
+
+def load_pretrained_llava_model_for_sft_training(
+    device_str: str = shared.torch_devices.cuda.value, precision: Precision = "16bit"
+) -> peft.PeftModel:
+    model = load_pretrained_llava_model(
+        skip_lora_adapters=True, device=device_str, precision=precision
+    )
+    model = add_pretrained_RaDialog_lora_adapters_to_LlavaLlamaForCausalLM_model(model)
+    return model
 
 
 def load_pretrained_llava_model_for_ppo_training(
