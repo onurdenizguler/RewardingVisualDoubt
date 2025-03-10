@@ -16,7 +16,7 @@ import trl
 import transformers
 
 from RewardingVisualDoubt import dataset, prompter, response, reward, shared, vllm
-from RewardingVisualDoubt import train as training
+from RewardingVisualDoubt import training as training
 
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_OUTPUT_DIR = path.Path("output")
