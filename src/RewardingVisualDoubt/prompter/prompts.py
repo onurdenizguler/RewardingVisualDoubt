@@ -55,3 +55,40 @@ POST_GENERATION_USER_CONFIDENCE_REQUEST_OPTIONS = [
         "Lower numbers show more doubt, while higher numbers show more confidence in your answer."
     ),
 ]
+
+
+BINARY_QA_USER_QUESTION_OPTIONS = [
+    ("Is there evidence of {finding} in the image?"),
+    ("Is there any {finding}?"),
+    ("Is any {finding} evident in the report?"),
+    ("Is there any indication of {finding} in the report?"),
+    ("Does the report mention  {finding}?"),
+    ("Does the patient have {finding}?"),
+    ("Is there any sign of  {finding} in the report?"),
+]
+
+
+BINARY_QA_POSTIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS = [
+    ('Yes, the image shows {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, the patient has {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, there is evidence of that in the image. {{"confidence": {confidence_score} }}'),
+    ('Yes, indications of {finding} are present. {{"confidence": {confidence_score}}}'),
+    ('Yes, the image findings align with {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, the image suggests {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, {finding} is visible. {{"confidence": {confidence_score}}}'),
+    ('Yes, the observed characteristics match {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, the image presents signs of {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, the diagnostic markers indicate {finding}. {{"confidence": {confidence_score}}}'),
+]
+
+BINARY_QA_NEGATIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS = [
+    ('No, the image shows no {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, there is no evidence of that in the image. {{"confidence": {confidence_score}}}'),
+    ('No, the patient does not have {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, the image does not show {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, there are no indications of {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, {finding} is not observed in the image. {{"confidence": {confidence_score}}}'),
+    ('No, the image does not indicate {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, there is no detectable evidence of {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, the image does not provide signs of {finding}. {{"confidence": {confidence_score}}}'),
+]

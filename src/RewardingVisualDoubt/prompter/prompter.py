@@ -2,6 +2,9 @@
 import dataclasses
 import enum
 import typing as T
+import random
+from RewardingVisualDoubt.prompter import prompts
+import re
 
 DEFAULT_RADIALOG_SYSTEM_MESSAGE = (
     "A chat between a curious user and an artificial intelligence assistant acting as an experienced radiologist. "
@@ -22,14 +25,19 @@ BINARY_QA_INITIAL_INSTRUCTION = (
     "Is the following disease visible in the given X-ray image: {chexpert_finding_str}? "
 )
 
-BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST = (
+BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION = (
     "<image>. You are to act as a radiologist and answer a single question. "
     "After you respond, please provide your self evaluation of your confidence. "
     "Provide a confidence between 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, of how sure you are the answer is correct. "
     "A value close to 0 means you think there is a high probability that the answer is wrong. "
     "Your confidence is to be reported in a JSON dictionary of the following format: {{'confidence': int}}. "
-    "Is the following disease visible in the given X-ray image: {chexpert_finding_str}, and how confident are you? "
 )
+
+BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST = (
+    BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
+    + "Is the following disease visible in the given X-ray image: {chexpert_finding_str}, and how confident are you? "
+)
+
 
 # TODO Sample from different phrasings
 POST_GENERATION_USER_CONFIDENCE_REQUEST = (
@@ -44,6 +52,11 @@ POST_GENERATION_ASSISTANT_CONFIDENCE_COMPLIANCE = (
     "When asked how confident I am about a response, I consistently provide it in a JSON object, adhering to my policy."
     "The confidence JSON follows this structure: {'confidence': int}."
     "Here's my confidence JSON about my last response: "
+)
+
+
+BINARY_QA_ASSISTANT_RESPONSE_WITH_CONFIDENCE = (
+    'Yes, the disease is visible in the X-ray image. {{"confidence": {confidence_score} }}'
 )
 
 
@@ -74,6 +87,28 @@ class Conversation:
     messages: list[Message]
     seperator_1: Seperator
     seperator_2: Seperator
+
+
+def _extract_variables_from_formattable_string(format_string):
+    # This pattern matches both {var} and {"var"} patterns
+    pattern = r"{([^{}]+)}|{\"([^{}\"]+)\"}"
+
+    matches = re.findall(pattern, format_string)
+
+    # Process the matches to extract variable names
+    variables = []
+    for match in matches:
+        # Each match is a tuple with one empty string and one variable name
+        var_name = match[0] or match[1]
+        variables.append(var_name)
+
+    return variables
+
+
+def _sample_response_template(options: list[str]):
+    index = random.randint(0, len(options) - 1)
+    response_template = options[index]
+    return response_template
 
 
 def _add_message_to_conversation(conversation: Conversation, message: Message) -> Conversation:
@@ -206,6 +241,56 @@ def build_binary_qa_instruction_from_disease_under_study_with_confidence_request
         message=Message(role=Role.ASSISTANT, text=None),
     )
     return _convert_conversation_into_prompt(conversation)
+
+
+def build_binary_qa_prompt_with_response_and_confidence_for_sft(
+    chexpert_finding_str: str,
+    occurrence_of_disease: bool,
+    possible_confidences: list[int],
+    return_conversation: bool = False,
+) -> str | Conversation:
+
+    conversation = _get_vicuna_conversation()
+
+    question_template = _sample_response_template(options=prompts.BINARY_QA_USER_QUESTION_OPTIONS)
+    question = question_template.format(finding=chexpert_finding_str)
+    instruction = (
+        BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION + question
+    )
+
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(
+            role=Role.USER,
+            text=instruction,
+        ),
+    )
+
+    response_template = _sample_response_template(
+        options=(
+            prompts.BINARY_QA_POSTIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS
+            if occurrence_of_disease
+            else prompts.BINARY_QA_NEGATIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS
+        )
+    )
+
+    formattable_variables = _extract_variables_from_formattable_string(response_template)
+    if "finding" in formattable_variables:
+        assistant_response = response_template.format(
+            finding=chexpert_finding_str, confidence_score=random.choice(possible_confidences)
+        )
+    else:
+        assistant_response = response_template.format(
+            confidence_score=random.choice(possible_confidences)
+        )
+
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(role=Role.ASSISTANT, text=assistant_response),
+    )
+    return (
+        _convert_conversation_into_prompt(conversation) if not return_conversation else conversation
+    )
 
 
 def build_post_generation_user_confidence_request() -> str:
