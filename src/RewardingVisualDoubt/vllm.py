@@ -276,7 +276,9 @@ def _freeze_all_non_lora_params(
 ##################### TOKENIZER AND IMAGE PROCESSOR #####################
 
 
-def load_pretrained_text_only_llava_tokenizer(model_base: str) -> transformers.LlamaTokenizer:
+def load_pretrained_text_only_llava_tokenizer(
+    model_base: str = LLAVA_BASE_MODEL_NAME,
+) -> transformers.LlamaTokenizer:
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_base, use_fast=False)
     tokenizer.pad_token_id = (
         tokenizer.eos_token_id
@@ -286,7 +288,7 @@ def load_pretrained_text_only_llava_tokenizer(model_base: str) -> transformers.L
 
 
 def load_pretrained_llava_tokenizer_with_image_support(
-    model_base: str,
+    model_base: str = LLAVA_BASE_MODEL_NAME,
 ) -> transformers.LlamaTokenizer:
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_base, use_fast=False
