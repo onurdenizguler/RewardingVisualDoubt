@@ -1,5 +1,6 @@
 import enum
 import random
+import inspect
 import typing as T
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -15,7 +16,7 @@ from torch.utils.data import Dataset as TorchDataset
 from transformers import PreTrainedTokenizer
 from utils import create_chest_xray_transform_for_inference, remap_to_uint8
 
-from RewardingVisualDoubt import mimic_cxr
+from RewardingVisualDoubt import mimic_cxr, shared
 
 biovil_image_transformer = create_chest_xray_transform_for_inference(512, center_crop_size=448)
 bfloat16_dtype: torch.dtype = torch.bfloat16
@@ -27,12 +28,17 @@ class DatasetSplit(enum.Enum):
     TEST = "test"
 
 
+######################## MODEL INPUTS AND BATCHES ########################
+
+
+#### Datapoint level dataclasses
+
+
 class LlavaModelInputDict(T.TypedDict):
     text_prompt_input_ids: torch.Tensor
     images: torch.Tensor  # Image tensor of dtype 16
 
 
-# model domain
 @dataclass
 class LlavaModelInput:
     text_prompt_input_ids: torch.Tensor  # Tokenized text
@@ -56,6 +62,15 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict(T.TypedDict):
     mimic_cxr_datapoint_metadata: mimic_cxr.MimicCxrBinaryQADatapoint
 
 
+class BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT(
+    BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict
+):
+    expected_output_ids: torch.Tensor
+
+
+#### Batch level dataclasses
+
+
 class MimicCxrLlavaModelInputBatchDict(T.TypedDict):
     batch_llava_model_input_dict: LlavaModelInputDict
     batch_attention_mask: torch.Tensor
@@ -64,7 +79,13 @@ class MimicCxrLlavaModelInputBatchDict(T.TypedDict):
     batch_mimic_cxr_datapoint_metadata: list[mimic_cxr.MimicCxrBinaryQADatapoint]
 
 
-# data interface coupled with loading conversion logic
+class MimicCxrLlavaModelInputBatchDictForSFT(MimicCxrLlavaModelInputBatchDict):
+    batch_expected_output_ids: torch.Tensor
+
+
+######################## DATA INTERFACING ########################
+
+
 def _load_image(
     image_path: Path,
 ) -> Image.Image:
@@ -75,22 +96,9 @@ def _load_image(
     return image
 
 
-def _create_prompt(
-    prompter: T.Callable[[str], str],
-    disease_labels: T.List[mimic_cxr.ChexpertFinding],
-) -> str:
-    findings_string = mimic_cxr.convert_binary_chexpert_findings_to_string(disease_labels)
-    text_input = prompter(findings_string)
-    return text_input
+######################## TRAINING/INFERENCE TIME DEVICE HELPERS ########################
 
 
-def _create_prompt_for_binary_qa(
-    binary_qa_prompter: T.Callable[[str], str], disease: mimic_cxr.ChexpertFinding
-) -> str:
-    return binary_qa_prompter(disease.value)
-
-
-# training/inference time logic
 def move_llava_model_input_to_device(
     model_input: LlavaModelInput, device: torch.device
 ) -> LlavaModelInput:
@@ -107,7 +115,35 @@ def move_llava_model_input_dict_to_device(
     return model_input_dict
 
 
-# model repository function coupled with datapoint and prompter
+######################## DATA PREPERATION ########################
+
+
+def _create_prompt(
+    prompter: T.Callable[[str], str],
+    disease_labels: T.List[mimic_cxr.ChexpertFinding],
+) -> str:
+    findings_string = mimic_cxr.convert_binary_chexpert_findings_to_string(disease_labels)
+    text_input = prompter(findings_string)
+    return text_input
+
+
+def _create_prompt_for_binary_qa(
+    binary_qa_prompter: T.Callable[..., str],
+    datapoint: mimic_cxr.MimicCxrBinaryQADatapoint,
+    **kwargs
+) -> str:
+    prompter_params = inspect.signature(binary_qa_prompter).parameters
+    possible_inputs = {
+        "chexpert_finding_str": datapoint.disease.value,
+        "occurrence_of_disease": datapoint.label == mimic_cxr.ChexpertLabel.POSITIVE,
+        "possible_confidences": shared.POSSIBLE_CONFIDENCES,
+        **kwargs,
+    }
+    filtered_args = {k: v for k, v in possible_inputs.items() if k in prompter_params}
+
+    return binary_qa_prompter(**filtered_args)
+
+
 def _create_llava_model_input_from_mimic_cxr_datapoint(
     datapoint: mimic_cxr.MimicCxrDatapoint | mimic_cxr.MimicCxrBinaryQADatapoint,
     tokenizer: PreTrainedTokenizer,
@@ -124,7 +160,7 @@ def _create_llava_model_input_from_mimic_cxr_datapoint(
         image = torch.tensor(np.array(image))  # .unsqueeze(0)
 
     if isinstance(datapoint, mimic_cxr.MimicCxrBinaryQADatapoint):
-        text_input = _create_prompt_for_binary_qa(prompter, datapoint.disease)
+        text_input = _create_prompt_for_binary_qa(prompter, datapoint)
     elif isinstance(datapoint, mimic_cxr.MimicCxrDatapoint):
         text_input = _create_prompt(prompter, datapoint.disease_labels)
     else:
@@ -172,6 +208,9 @@ def _create_mimic_cxr_binary_qa_datapoint_from_mimic_cxr_dataset_df_row(
         label=mimic_cxr.ChexpertLabel(row["label"]),
     )
     return mimic_cxr_datapoint
+
+
+######################## TORCH DATASETS ########################
 
 
 @dataclass
@@ -235,19 +274,18 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
     def __len__(self):
         return len(self.df)
 
-    def __getitem__(self, idx: int) -> BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict:
-
+    def _prepare_binary_qa_prompted_mimic_cxr_llave_model_input_datapoint_dict(
+        self, idx: int
+    ) -> BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict:
         row = self.df.iloc[idx]
         mimic_cxr_binary_qa_datapoint = (
             _create_mimic_cxr_binary_qa_datapoint_from_mimic_cxr_dataset_df_row(row)
         )
-        prompt = _create_prompt_for_binary_qa(self.prompter, mimic_cxr_binary_qa_datapoint.disease)
+        prompt = _create_prompt_for_binary_qa(self.prompter, mimic_cxr_binary_qa_datapoint)
         llava_model_input = _create_llava_model_input_from_mimic_cxr_datapoint(
             mimic_cxr_binary_qa_datapoint, self.tokenizer, self.prompter, self.image_transform
         )
-
         label = mimic_cxr_binary_qa_datapoint.label
-        # TODO tokenize label?
 
         return BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict(
             llava_model_input_dict=llava_model_input.as_dict(),
@@ -255,6 +293,80 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
             prompt=prompt,
             mimic_cxr_datapoint_metadata=mimic_cxr_binary_qa_datapoint,
         )
+
+    def __getitem__(self, idx: int) -> BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict:
+        return self._prepare_binary_qa_prompted_mimic_cxr_llave_model_input_datapoint_dict(idx)
+
+
+def _replace_confidence_score_tokens_with_value(
+    input_ids: torch.Tensor,
+) -> torch.Tensor:
+    reversed_ids = input_ids.flip(0)
+    COLON_TOKEN_ID = 1115
+
+    try:
+        # Find index of the first COLON_TOKEN_ID occuring in the reversed ids
+        colon_idx = (reversed_ids == COLON_TOKEN_ID).nonzero(as_tuple=True)[0]
+        if colon_idx.numel() > 0:
+            colon_idx = colon_idx[0]
+
+            # Replace tokens from index 2 to (colon_idx - 1), ensuring valid range
+            if colon_idx > 2:
+                reversed_ids[2 : colon_idx - 1] = -100
+
+        # Reverse back to original order
+        output_ids = reversed_ids.flip(0)
+    except Exception as e:
+        print("Error in _replace_confidence_score_tokens_with_value", e)
+        output_ids = input_ids
+    return output_ids
+
+
+@dataclass
+class BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT(
+    BinaryQAPromptedMimicCxrLlavaModelInputDataset
+):
+    def __getitem__(self, idx: int) -> BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT:
+        datapoint_dict = (
+            self._prepare_binary_qa_prompted_mimic_cxr_llave_model_input_datapoint_dict(idx)
+        )
+        expected_output_ids = _replace_confidence_score_tokens_with_value(
+            datapoint_dict["llava_model_input_dict"]["text_prompt_input_ids"],
+        )
+        return BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT(
+            **datapoint_dict, expected_output_ids=expected_output_ids
+        )
+
+
+def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
+    split: DatasetSplit, tokenizer: PreTrainedTokenizer, prompter: T.Callable[..., str]
+) -> BinaryQAPromptedMimicCxrLlavaModelInputDataset:
+    return BinaryQAPromptedMimicCxrLlavaModelInputDataset(
+        balanced_binary_qa_mimic_cxr_df=mimic_cxr.create_balanced_binary_qa_mimic_cxr_dataset_df(
+            mimic_cxr.create_mimic_cxr_dataset_df()
+        ),
+        tokenizer=tokenizer,
+        prompter=prompter,
+        image_transform=biovil_image_transformer,
+        split=split,
+    )
+
+
+def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset_for_sft(
+    split: DatasetSplit, tokenizer: PreTrainedTokenizer, prompter: T.Callable[..., str]
+) -> BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT:
+    return BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT(
+        balanced_binary_qa_mimic_cxr_df=mimic_cxr.create_balanced_binary_qa_mimic_cxr_dataset_df(
+            mimic_cxr.create_mimic_cxr_dataset_df()
+        ),
+        tokenizer=tokenizer,
+        prompter=prompter,
+        image_transform=biovil_image_transformer,
+        split=split,
+    )
+
+
+######################## DATALOADERS & HELPERS ########################
 
 
 def prompted_mimic_cxr_llava_model_input_collate_fn(
@@ -307,20 +419,6 @@ def prompted_mimic_cxr_llava_model_input_collate_fn(
     )
 
 
-def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
-    split: DatasetSplit, tokenizer: PreTrainedTokenizer, prompter: T.Callable[[str], str]
-) -> BinaryQAPromptedMimicCxrLlavaModelInputDataset:
-    return BinaryQAPromptedMimicCxrLlavaModelInputDataset(
-        balanced_binary_qa_mimic_cxr_df=mimic_cxr.create_balanced_binary_qa_mimic_cxr_dataset_df(
-            mimic_cxr.create_mimic_cxr_dataset_df()
-        ),
-        tokenizer=tokenizer,
-        prompter=prompter,
-        image_transform=biovil_image_transformer,
-        split=split,
-    )
-
-
 def get_mimic_cxr_llava_model_input_dataloader(
     dataset: (
         PromptedMimicCxrLlavaModelInputDataset | BinaryQAPromptedMimicCxrLlavaModelInputDataset
@@ -341,33 +439,79 @@ def get_mimic_cxr_llava_model_input_dataloader(
     )
 
 
-# Probably retire this function
-# def create_dataset_generator_from_mimic_cxr_dataset_df(
-#     mimic_cxr_df: pd.DataFrame,
-#     prompter: T.Callable[[str], str],
-#     tokenizer: PreTrainedTokenizer,
-#     device: torch.device,
-#     image_transform: T.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer,
-#     shuffle: bool = False,
-#     # TODO add split support
-# ) -> T.Callable[[], T.Iterator[T.Dict[str, torch.Tensor]]]:
-#     """Returns a generator function that yields model inputs"""
-#     indices = list(range(len(mimic_cxr_df)))
+def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft(
+    batch: list[BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT],
+    padding_tokenizer: PreTrainedTokenizer,
+) -> MimicCxrLlavaModelInputBatchDictForSFT:
 
-#     def dataset_generator() -> T.Iterator[T.Dict[str, torch.Tensor]]:
-#         if shuffle:
-#             random.shuffle(indices, random.seed(42))
+    llava_model_inputs, labels, prompts, mimic_cxr_datapoint_metadatas, expected_output_ids = zip(
+        *[
+            (
+                item["llava_model_input_dict"],
+                item["label"],
+                item["prompt"],
+                item["mimic_cxr_datapoint_metadata"],
+                item["expected_output_ids"],
+            )
+            for item in batch
+        ]
+    )
 
-#         for idx in indices:
-#             row = mimic_cxr_df.iloc[idx]
-#             mimic_cxr_datapoint = _create_mimic_cxr_datapoint_from_mimic_cxr_dataset_df_row(row)
-#             yield asdict(
-#                 move_llava_model_input_to_device(
-#                     _create_llava_model_input_from_mimic_cxr_datapoint(
-#                         mimic_cxr_datapoint, tokenizer, prompter, image_transform
-#                     ),
-#                     device=device,
-#                 )
-#             )
+    text_inputs = [
+        torch.as_tensor(sample["text_prompt_input_ids"]).clone().detach()
+        for sample in llava_model_inputs
+    ]
+    images = torch.stack([torch.as_tensor(sample["images"]) for sample in llava_model_inputs])
 
-#     return dataset_generator
+    padded_text_inputs_dict = padding_tokenizer.pad(
+        encoded_inputs={"input_ids": text_inputs},
+        padding=True,
+        max_length=None,
+        return_tensors="pt",
+    )
+    text_inputs = padded_text_inputs_dict["input_ids"]
+    attention_mask = padded_text_inputs_dict["attention_mask"]
+
+    batch_llava_model_inputs = LlavaModelInputDict(text_prompt_input_ids=text_inputs, images=images)
+    batch_labels = (
+        torch.tensor(labels, dtype=torch.float32) if labels[0] is not None else list(labels)
+    )
+    batch_metadata = list(mimic_cxr_datapoint_metadatas)
+    batch_prompts = list(prompts)
+
+    padded_expected_ouput_ids = padding_tokenizer.pad(
+        encoded_inputs={"input_ids": expected_output_ids},
+        padding=True,
+        max_length=None,
+        return_tensors="pt",
+    )
+    padded_expected_ouput_ids = padded_expected_ouput_ids["input_ids"]
+
+    return MimicCxrLlavaModelInputBatchDictForSFT(
+        batch_llava_model_input_dict=batch_llava_model_inputs,
+        batch_attention_mask=attention_mask,
+        batch_labels=batch_labels,
+        batch_prompts=batch_prompts,
+        batch_mimic_cxr_datapoint_metadata=batch_metadata,
+        batch_expected_output_ids=padded_expected_ouput_ids,
+    )
+
+
+def get_mimic_cxr_llava_model_input_dataloader_for_sft(
+    dataset: BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT,
+    batch_size: int,
+    padding_tokenizer: PreTrainedTokenizer,
+    num_workers: T.Optional[int] = None,
+) -> DataLoader:
+    return DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn_for_sft(
+            x, padding_tokenizer
+        ),
+        shuffle=False,
+        num_workers=num_workers if num_workers else 0,  # TODO let torch decide!
+        pin_memory=True,
+        drop_last=True,
+        persistent_workers=True,
+    )
