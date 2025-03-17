@@ -19,7 +19,6 @@ REPORT_GENERATION_INITIAL_INSTRUCTION = (
     "be concise and don't provide explanations or reasons."
 )
 
-# TODO Sample from different phrasings
 BINARY_QA_INITIAL_INSTRUCTION = (
     "<image>. You are to act as a radiologist and answer the following question: "
     "Is the following disease visible in the given X-ray image: {chexpert_finding_str}? "
@@ -30,7 +29,7 @@ BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION = (
     "After you respond, please provide your self evaluation of your confidence. "
     "Provide a confidence between 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, of how sure you are the answer is correct. "
     "A value close to 0 means you think there is a high probability that the answer is wrong. "
-    "Your confidence is to be reported in a JSON dictionary of the following format: {{'confidence': int}}. "
+    'Your confidence is to be reported in a JSON dictionary of the following format: {"confidence": int}. '
 )
 
 BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST = (
@@ -39,7 +38,6 @@ BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST = (
 )
 
 
-# TODO Sample from different phrasings
 POST_GENERATION_USER_CONFIDENCE_REQUEST = (
     "Now evaluate your own response. How confident are you in your answer? "
     "Provide a confidence between 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, of how sure you are the answer is correct. "
@@ -47,7 +45,6 @@ POST_GENERATION_USER_CONFIDENCE_REQUEST = (
     "The closer the value is to 10, the higher you think is the probability that the answer is correct. "
 )
 
-# TODO Sample from different phrasings
 POST_GENERATION_ASSISTANT_CONFIDENCE_COMPLIANCE = (
     "When asked how confident I am about a response, I consistently provide it in a JSON object, adhering to my policy."
     "The confidence JSON follows this structure: {'confidence': int}."
@@ -248,7 +245,7 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
     occurrence_of_disease: bool,
     possible_confidences: list[int],
     return_conversation: bool = False,
-) -> str | Conversation:
+) -> str:
 
     conversation = _get_vicuna_conversation()
 
@@ -288,9 +285,7 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
         conversation=conversation,
         message=Message(role=Role.ASSISTANT, text=assistant_response),
     )
-    return (
-        _convert_conversation_into_prompt(conversation) if not return_conversation else conversation
-    )
+    return _convert_conversation_into_prompt(conversation)
 
 
 def build_post_generation_user_confidence_request() -> str:
