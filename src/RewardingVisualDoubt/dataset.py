@@ -22,6 +22,9 @@ biovil_image_transformer = create_chest_xray_transform_for_inference(512, center
 bfloat16_dtype: torch.dtype = torch.bfloat16
 
 
+# TODO Always cast images to dtype=torch.bfloat16!!!! (The logic currently is quite convoluted and images get cast only while being moved to device)
+
+
 class DatasetSplit(enum.Enum):
     TRAIN = "train"
     VALIDATION = "validate"
@@ -497,18 +500,71 @@ def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft(
     )
 
 
+def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft_simplified(
+    batch: list[BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT],
+    padding_tokenizer: PreTrainedTokenizer,
+) -> dict:
+
+    llava_model_inputs, expected_output_ids = zip(
+        *[
+            (
+                item["llava_model_input_dict"],
+                item["expected_output_ids"],
+            )
+            for item in batch
+        ]
+    )
+
+    text_inputs = [
+        torch.as_tensor(sample["text_prompt_input_ids"]).clone().detach()
+        for sample in llava_model_inputs
+    ]
+    images = torch.stack([torch.as_tensor(sample["images"]) for sample in llava_model_inputs]).to(
+        dtype=torch.bfloat16
+    )
+    # images dtype casting happens here but this logic should happen elsewhere to prevent bugs
+
+    padded_text_inputs_dict = padding_tokenizer.pad(
+        encoded_inputs={"input_ids": text_inputs},
+        padding=True,
+        max_length=None,
+        return_tensors="pt",
+    )
+    text_inputs = padded_text_inputs_dict["input_ids"]
+    attention_mask = padded_text_inputs_dict["attention_mask"]
+
+    padded_expected_ouput_ids = padding_tokenizer.pad(
+        encoded_inputs={"input_ids": expected_output_ids},
+        padding=True,
+        max_length=None,
+        return_tensors="pt",
+    )
+    padded_expected_ouput_ids = padded_expected_ouput_ids["input_ids"]
+
+    return {
+        "input_ids": text_inputs,
+        "images": images,
+        "attention_mask": attention_mask,
+        "labels": padded_expected_ouput_ids,
+    }
+
+
 def get_mimic_cxr_llava_model_input_dataloader_for_sft(
     dataset: BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT,
     batch_size: int,
     padding_tokenizer: PreTrainedTokenizer,
     num_workers: T.Optional[int] = None,
+    simplified_batch: bool = False,
 ) -> DataLoader:
+    collate_fn = (
+        prompted_mimic_cxr_llava_model_input_collate_fn_for_sft_simplified
+        if simplified_batch
+        else prompted_mimic_cxr_llava_model_input_collate_fn_for_sft
+    )
     return DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn_for_sft(
-            x, padding_tokenizer
-        ),
+        collate_fn=lambda x: collate_fn(x, padding_tokenizer),
         shuffle=False,
         num_workers=num_workers if num_workers else 0,  # TODO let torch decide!
         pin_memory=True,
