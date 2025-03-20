@@ -94,6 +94,7 @@ def _extract_variables_from_formattable_string(format_string):
     matches = re.findall(pattern, format_string)
 
     # Process the matches to extract variable names
+
     variables = []
     for match in matches:
         # Each match is a tuple with one empty string and one variable name
@@ -285,6 +286,33 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
     _add_message_to_conversation(
         conversation=conversation,
         message=Message(role=Role.ASSISTANT, text=assistant_response),
+    )
+    return _convert_conversation_into_prompt(conversation)
+
+
+def build_binary_qa_prompt_with_response_and_confidence_for_inference(
+    chexpert_finding_str: str,
+) -> str:
+
+    conversation = _get_vicuna_conversation()
+
+    question_template = _sample_response_template(options=prompts.BINARY_QA_USER_QUESTION_OPTIONS)
+    question = question_template.format(finding=chexpert_finding_str)
+    instruction = (
+        BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION + question
+    )
+
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(
+            role=Role.USER,
+            text=instruction,
+        ),
+    )
+
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(role=Role.ASSISTANT, text=None),
     )
     return _convert_conversation_into_prompt(conversation)
 
