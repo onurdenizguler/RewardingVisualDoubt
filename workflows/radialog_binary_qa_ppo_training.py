@@ -4,19 +4,20 @@ from RewardingVisualDoubt import infrastructure
 infrastructure.make_ipython_reactive_to_changing_codebase()
 infrastructure.supress_known_warnings()
 
+import dataclasses
+import os
 import pathlib as path
 import typing as t
-import os
-import dataclasses
 
 import numpy as np
 import torch
-from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
-import trl
 import transformers
+import trl
+from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
 
-from RewardingVisualDoubt import dataset, prompter, response, reward, shared, vllm
+from RewardingVisualDoubt import dataset, prompter, response, reward, shared
 from RewardingVisualDoubt import training as training
+from RewardingVisualDoubt import vllm
 
 DEFAULT_BATCH_SIZE = 8
 DEFAULT_OUTPUT_DIR = path.Path("output")

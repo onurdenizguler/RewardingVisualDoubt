@@ -4,29 +4,21 @@ from RewardingVisualDoubt import infrastructure, training
 infrastructure.make_ipython_reactive_to_changing_codebase()
 infrastructure.supress_known_warnings()
 
-import pathlib as path
-import typing as t
-import torch
-import numpy as np
-import time
 import os
-from torch.utils.data import DataLoader
-import accelerate
-import dataclasses
+import pathlib as path
+
+import torch
 import transformers
 import wandb
-
-from trl import PPOConfig, PPOTrainer
-
-from RewardingVisualDoubt import dataset, prompter, shared, vllm, response, reward
-from RewardingVisualDoubt import training as training
 from tqdm import tqdm
+
+from RewardingVisualDoubt import dataset, prompter, response, reward, shared
+from RewardingVisualDoubt import training as training
+from RewardingVisualDoubt import vllm
 
 os.environ["WANDB_API_KEY"] = "da3cb086bbc110c16cbc5ba4c284a19b0b461710"
 
-from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
-
-STOP_STR = prompter.Seperator.END_OF_SEQUENCE_SEPERATOR.value
+######################################## 1. Load the model and tokenizer ########################################
 
 device_str = (
     shared.torch_devices.cuda.value if torch.cuda.is_available() else shared.torch_devices.cpu.value
@@ -84,14 +76,15 @@ dataloader_eval = dataset.get_mimic_cxr_llava_model_input_dataloader_for_sft(
 eval_batch_iterator = iter(dataloader_eval)
 
 
-# ---- Training & Checkpointing ----
-# A BATCH OF 8 SAMPLES TAKES 10sec to take a training step
+######################################## 3. Train the model ########################################
+
+# A BATCH OF 4 SAMPLES TAKES 5sec to take a training step
 NUM_EPOCHS = 1
 CHECKPOINT_DIR = "training_checkpoints"
 GRAD_ACCUM_STEPS = 4  # every 16 sample, take a step
 LOGGING_STEPS = GRAD_ACCUM_STEPS * 2  # at every second gradient step
-STEPS_UNTIL_CHECKPOINT = 1
-NUM_BATCHES_TO_EVALUATE = 15
+STEPS_UNTIL_CHECKPOINT = 60  # equivalent roughly to Every 30 minutes
+NUM_BATCHES_TO_EVALUATE = 60
 LR = 5e-5
 
 # ---- Optimizer & Scheduler ----
@@ -113,6 +106,7 @@ for epoch in range(NUM_EPOCHS):
     loop = tqdm(dataloader_train, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}")
 
     for step, batch in enumerate(loop):
+        ######### 3.1 Unpack the batch #########
         batch: dataset.MimicCxrLlavaModelInputBatchDictForSFT = batch
         batch_llava_model_input_dict = batch["batch_llava_model_input_dict"]
         batch_llava_model_input_dict = dataset.move_llava_model_input_dict_to_device(
@@ -130,7 +124,7 @@ for epoch in range(NUM_EPOCHS):
         if not is_input_verified:
             print("(input_ids == labels) | (labels == -100) verification failed.")
 
-        # ---- Forward & Backward Pass ----
+        ######### 3.2 Forward pass and backward pass #########
         outputs = model(
             input_ids=input_ids, images=images, attention_mask=attention_mask, labels=labels
         )
@@ -146,7 +140,8 @@ for epoch in range(NUM_EPOCHS):
         if step % LOGGING_STEPS == 0:
             wandb.log({"train_loss": loss.item() * GRAD_ACCUM_STEPS})
 
-        # ---- Validation & Checkpointing ----
+        ######### 3.3 Validation #########
+
         if (step + 1) % STEPS_UNTIL_CHECKPOINT == 0:
             print(f"Arrived at checkpoint {step + 1}. Starting validation.")
             model.eval()
@@ -198,4 +193,5 @@ for epoch in range(NUM_EPOCHS):
             model.train()  # Resume training
 
 wandb.finish()
-torch.save(model.state_dict(), "llava_lora_final.pth")
+checkpoint_path = os.path.join(CHECKPOINT_DIR, f"llava_lora_final.pth")
+model.save_pretrained(checkpoint_path)

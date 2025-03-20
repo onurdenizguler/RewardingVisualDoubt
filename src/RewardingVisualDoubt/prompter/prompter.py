@@ -1,10 +1,11 @@
 # %%
 import dataclasses
 import enum
-import typing as T
 import random
-from RewardingVisualDoubt.prompter import prompts
 import re
+import typing as T
+
+from RewardingVisualDoubt.prompter import prompts
 
 DEFAULT_RADIALOG_SYSTEM_MESSAGE = (
     "A chat between a curious user and an artificial intelligence assistant acting as an experienced radiologist. "
