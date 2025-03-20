@@ -176,3 +176,5 @@ data/
 
 **/wandb/**/
 **/wandb/* 
+
+**/training_checkpoints/**
