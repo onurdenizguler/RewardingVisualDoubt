@@ -40,7 +40,6 @@ padding_tokenizer.pad_token = padding_tokenizer.bos_token
 ######################################## 2. Load the datasets and the dataloaders ########################################
 
 DEFAULT_BATCH_SIZE = 4
-DEFAULT_OUTPUT_DIR = path.Path("output")
 
 
 print("Loading the datasets and the dataloaders...")
@@ -80,7 +79,9 @@ eval_batch_iterator = iter(dataloader_eval)
 
 # A BATCH OF 4 SAMPLES TAKES 5sec to take a training step
 NUM_EPOCHS = 1
-CHECKPOINT_DIR = "training_checkpoints"
+CHECKPOINT_DIR = (
+    "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/training_checkpoints"
+)
 GRAD_ACCUM_STEPS = 4  # every 16 sample, take a step
 LOGGING_STEPS = GRAD_ACCUM_STEPS * 2  # at every second gradient step
 STEPS_UNTIL_CHECKPOINT = 60  # equivalent roughly to Every 30 minutes
