@@ -1,9 +1,3 @@
-# %% Set script for interactive development and import modules
-from RewardingVisualDoubt import infrastructure, training
-
-infrastructure.make_ipython_reactive_to_changing_codebase()
-infrastructure.supress_known_warnings()
-
 import os
 import pathlib as path
 
@@ -12,9 +6,7 @@ import transformers
 import wandb
 from tqdm import tqdm
 
-from RewardingVisualDoubt import dataset, prompter, response, reward, shared
-from RewardingVisualDoubt import training as training
-from RewardingVisualDoubt import vllm
+from RewardingVisualDoubt import dataset, prompter, response, reward, shared, training, vllm
 
 os.environ["WANDB_API_KEY"] = "da3cb086bbc110c16cbc5ba4c284a19b0b461710"
 
@@ -37,10 +29,22 @@ padding_tokenizer.padding_side = "left"
 padding_tokenizer.pad_token = padding_tokenizer.bos_token
 
 
-######################################## 2. Load the datasets and the dataloaders ########################################
+######################################## 2. Train-time parameters ########################################
 
-DEFAULT_BATCH_SIZE = 4
+NUM_EPOCHS = 1
+TRAINING_BATCH_SIZE = 8
+VALIDATION_BATCH_SIZE = 16
+CHECKPOINT_DIR = (
+    "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/training_checkpoints"
+)
+GRAD_ACCUM_STEPS = 4  # every 32 sample, take a step
+LOGGING_STEPS = GRAD_ACCUM_STEPS  # log at every gradient step
+STEPS_UNTIL_CHECKPOINT = 60  # roughly every 10-15 min (a training step of 8 samples takes 10-15sec)
+NUM_BATCHES_TO_EVALUATE = 10  # take a look at 160 val examples
+LR = 5e-5
 
+
+######################################## 3. Load the datasets and the dataloaders ########################################
 
 print("Loading the datasets and the dataloaders...")
 dataset_train = dataset.get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset_for_sft(
@@ -54,11 +58,9 @@ dataset_eval = dataset.get_binary_qa_prompted_mimic_cxr_llava_model_input_datase
     prompter=prompter.build_binary_qa_prompt_with_response_and_confidence_for_sft,
 )
 
-padding_tokenizer.pad_token = padding_tokenizer.bos_token  # TODO how about this?
-
 dataloader_train = dataset.get_mimic_cxr_llava_model_input_dataloader_for_sft(
     dataset=dataset_train,
-    batch_size=DEFAULT_BATCH_SIZE,
+    batch_size=TRAINING_BATCH_SIZE,
     padding_tokenizer=padding_tokenizer,
     num_workers=8,  # Let Torch decide.
     simplified_batch=False,
@@ -66,7 +68,7 @@ dataloader_train = dataset.get_mimic_cxr_llava_model_input_dataloader_for_sft(
 
 dataloader_eval = dataset.get_mimic_cxr_llava_model_input_dataloader_for_sft(
     dataset=dataset_eval,
-    batch_size=DEFAULT_BATCH_SIZE,
+    batch_size=VALIDATION_BATCH_SIZE,
     padding_tokenizer=padding_tokenizer,
     num_workers=8,  # Let Torch decide.
     simplified_batch=False,
@@ -75,18 +77,8 @@ dataloader_eval = dataset.get_mimic_cxr_llava_model_input_dataloader_for_sft(
 eval_batch_iterator = iter(dataloader_eval)
 
 
-######################################## 3. Train the model ########################################
+######################################## 4. Train the model ########################################
 
-# A BATCH OF 4 SAMPLES TAKES 5sec to take a training step
-NUM_EPOCHS = 1
-CHECKPOINT_DIR = (
-    "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/training_checkpoints"
-)
-GRAD_ACCUM_STEPS = 4  # every 16 sample, take a step
-LOGGING_STEPS = GRAD_ACCUM_STEPS * 2  # at every second gradient step
-STEPS_UNTIL_CHECKPOINT = 60  # equivalent roughly to Every 30 minutes
-NUM_BATCHES_TO_EVALUATE = 60
-LR = 5e-5
 
 # ---- Optimizer & Scheduler ----
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
@@ -125,7 +117,7 @@ for epoch in range(NUM_EPOCHS):
         if not is_input_verified:
             print("(input_ids == labels) | (labels == -100) verification failed.")
 
-        ######### 3.2 Forward pass and backward pass #########
+        ######### 4.2 Forward pass and backward pass #########
         outputs = model(
             input_ids=input_ids, images=images, attention_mask=attention_mask, labels=labels
         )
@@ -139,9 +131,12 @@ for epoch in range(NUM_EPOCHS):
 
         # ---- Logging ----
         if step % LOGGING_STEPS == 0:
-            wandb.log({"train_loss": loss.item() * GRAD_ACCUM_STEPS})
+            wandb.log(
+                {"train_loss": loss.item() * GRAD_ACCUM_STEPS},
+                step=step + epoch * len(dataloader_train),
+            )
 
-        ######### 3.3 Validation #########
+        ######### 4.3 Validation #########
 
         if (step + 1) % STEPS_UNTIL_CHECKPOINT == 0:
             print(f"Arrived at checkpoint {step + 1}. Starting validation.")
@@ -158,8 +153,8 @@ for epoch in range(NUM_EPOCHS):
                     eval_batch = next(eval_batch_iterator)
 
                 with torch.no_grad():
-                    batch: dataset.MimicCxrLlavaModelInputBatchDictForSFT = eval_batch
-                    batch_llava_model_input_dict = batch["batch_llava_model_input_dict"]
+                    eval_batch: dataset.MimicCxrLlavaModelInputBatchDictForSFT = eval_batch
+                    batch_llava_model_input_dict = eval_batch["batch_llava_model_input_dict"]
                     batch_llava_model_input_dict = dataset.move_llava_model_input_dict_to_device(
                         batch_llava_model_input_dict, device
                     )
@@ -167,8 +162,8 @@ for epoch in range(NUM_EPOCHS):
                         batch_llava_model_input_dict["text_prompt_input_ids"],
                         batch_llava_model_input_dict["images"],
                     )
-                    labels = batch["batch_expected_output_ids"].to(device)
-                    attention_mask = batch["batch_attention_mask"].to(device)
+                    labels = eval_batch["batch_expected_output_ids"].to(device)
+                    attention_mask = eval_batch["batch_attention_mask"].to(device)
 
                     val_outputs = model(
                         input_ids=input_ids,
@@ -180,7 +175,7 @@ for epoch in range(NUM_EPOCHS):
                     val_losses.append(val_loss)
 
             avg_val_loss = sum(val_losses) / len(val_losses)
-            wandb.log({"val_loss": avg_val_loss})
+            wandb.log({"val_loss": avg_val_loss}, step=step + epoch * len(dataloader_train))
 
             # ---- Checkpoint Saving ----
             if avg_val_loss < best_val_loss:
