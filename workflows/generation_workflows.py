@@ -4,6 +4,7 @@ from RewardingVisualDoubt import infrastructure
 infrastructure.make_ipython_reactive_to_changing_codebase()
 
 import typing as t
+import functools
 
 import torch
 from datasets import IterableDataset
@@ -130,7 +131,9 @@ padding_tokenizer.padding_side = "left"
 dataset_test = dataset.get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
     split=dataset.DatasetSplit.TEST,
     tokenizer=tokenizer,
-    prompter=prompter.build_binary_qa_prompt_with_response_and_confidence_for_inference,
+    prompter=functools.partial(
+        prompter.build_binary_qa_prompt_with_response_and_confidence_for_sft, is_for_inference=True
+    ),
 )
 dataloader_test = dataset.get_mimic_cxr_llava_model_input_dataloader(
     dataset=dataset_test, batch_size=1, padding_tokenizer=padding_tokenizer, num_workers=8

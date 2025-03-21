@@ -21,7 +21,7 @@ biovil_image_transformer = create_chest_xray_transform_for_inference(512, center
 bfloat16_dtype: torch.dtype = torch.bfloat16
 
 
-# TODO Always cast images to dtype=torch.bfloat16!!!! (The logic currently is quite convoluted and images get cast only while being moved to device)
+# TODO ?Should i always cast images to dtype=torch.bfloat16!!!! (The logic currently is quite convoluted and images get cast only while being moved to device)
 
 
 class DatasetSplit(enum.Enum):
@@ -212,6 +212,30 @@ def _create_mimic_cxr_binary_qa_datapoint_from_mimic_cxr_dataset_df_row(
     return mimic_cxr_datapoint
 
 
+def _replace_confidence_score_tokens_with_value(
+    input_ids: torch.Tensor,
+) -> torch.Tensor:
+    reversed_ids = input_ids.flip(0)
+    COLON_TOKEN_ID = 1115
+
+    try:
+        # Find index of the first COLON_TOKEN_ID occuring in the reversed ids
+        colon_idx = (reversed_ids == COLON_TOKEN_ID).nonzero(as_tuple=True)[0]
+        if colon_idx.numel() > 0:
+            colon_idx = colon_idx[0]
+
+            # Replace tokens from index 2 to (colon_idx - 1), ensuring valid range
+            if colon_idx > 2:
+                reversed_ids[2 : colon_idx - 1] = -100
+
+        # Reverse back to original order
+        output_ids = reversed_ids.flip(0)
+    except Exception as e:
+        print("Error in _replace_confidence_score_tokens_with_value", e)
+        output_ids = input_ids
+    return output_ids
+
+
 ######################## TORCH DATASETS ########################
 
 
@@ -258,7 +282,7 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
     """
     mimic_cxr_df: pandas DataFrame containing MIMIC-CXR metadata (including `img_path`, `subject_id`, `study_id`, `split`).
     This dataset is used for training a model to answer binary questions about the presence of a specific disease in a chest x-ray image.
-    Each datapoint in this dataset contains a chest x-ray image, a prompt asking about one of the 13 possible CheXpert diseases, and a label indicating the presence or absence of the finding in the image.
+    Each datapoint in this dataset contains a chest x-ray image, a prompt asking about one of the 14 possible CheXpert findings, and a label indicating the presence or absence of the finding in the image.
     """
 
     balanced_binary_qa_mimic_cxr_df: pd.DataFrame
@@ -300,34 +324,14 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
         return self._prepare_binary_qa_prompted_mimic_cxr_llave_model_input_datapoint_dict(idx)
 
 
-def _replace_confidence_score_tokens_with_value(
-    input_ids: torch.Tensor,
-) -> torch.Tensor:
-    reversed_ids = input_ids.flip(0)
-    COLON_TOKEN_ID = 1115
-
-    try:
-        # Find index of the first COLON_TOKEN_ID occuring in the reversed ids
-        colon_idx = (reversed_ids == COLON_TOKEN_ID).nonzero(as_tuple=True)[0]
-        if colon_idx.numel() > 0:
-            colon_idx = colon_idx[0]
-
-            # Replace tokens from index 2 to (colon_idx - 1), ensuring valid range
-            if colon_idx > 2:
-                reversed_ids[2 : colon_idx - 1] = -100
-
-        # Reverse back to original order
-        output_ids = reversed_ids.flip(0)
-    except Exception as e:
-        print("Error in _replace_confidence_score_tokens_with_value", e)
-        output_ids = input_ids
-    return output_ids
-
-
 @dataclass
 class BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT(
     BinaryQAPromptedMimicCxrLlavaModelInputDataset
 ):
+    """
+    This dataset is used for training a model to answer binary questions about the presence of a specific disease in a chest x-ray image and provide the confidence score right after the answer.
+    """
+
     def __getitem__(self, idx: int) -> BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT:
         datapoint_dict = (
             self._prepare_binary_qa_prompted_mimic_cxr_llave_model_input_datapoint_dict(idx)
@@ -368,7 +372,7 @@ def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset_for_sft(
     )
 
 
-######################## DATALOADERS & HELPERS ########################
+######################## COLLATE FUNCTIONS FOR DATALOADERS ########################
 
 
 def prompted_mimic_cxr_llava_model_input_collate_fn(
@@ -418,26 +422,6 @@ def prompted_mimic_cxr_llava_model_input_collate_fn(
         batch_labels=batch_labels,
         batch_prompts=batch_prompts,
         batch_mimic_cxr_datapoint_metadata=batch_metadata,
-    )
-
-
-def get_mimic_cxr_llava_model_input_dataloader(
-    dataset: (
-        PromptedMimicCxrLlavaModelInputDataset | BinaryQAPromptedMimicCxrLlavaModelInputDataset
-    ),
-    batch_size: int,
-    padding_tokenizer: PreTrainedTokenizer,
-    num_workers: T.Optional[int] = None,
-) -> DataLoader:
-    return DataLoader(
-        dataset=dataset,
-        batch_size=batch_size,
-        collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn(x, padding_tokenizer),
-        shuffle=False,
-        num_workers=num_workers if num_workers else 0,  # TODO let torch decide!
-        pin_memory=True,
-        drop_last=True,
-        persistent_workers=True,
     )
 
 
@@ -499,53 +483,27 @@ def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft(
     )
 
 
-def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft_simplified(
-    batch: list[BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT],
+######################## GET DATALOADERS ########################
+
+
+def get_mimic_cxr_llava_model_input_dataloader(
+    dataset: (
+        PromptedMimicCxrLlavaModelInputDataset | BinaryQAPromptedMimicCxrLlavaModelInputDataset
+    ),
+    batch_size: int,
     padding_tokenizer: PreTrainedTokenizer,
-) -> dict:
-
-    llava_model_inputs, expected_output_ids = zip(
-        *[
-            (
-                item["llava_model_input_dict"],
-                item["expected_output_ids"],
-            )
-            for item in batch
-        ]
+    num_workers: T.Optional[int] = None,
+) -> DataLoader:
+    return DataLoader(
+        dataset=dataset,
+        batch_size=batch_size,
+        collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn(x, padding_tokenizer),
+        shuffle=False,
+        num_workers=num_workers if num_workers else 0,  # TODO let torch decide!
+        pin_memory=True,
+        drop_last=True,
+        persistent_workers=True,
     )
-
-    text_inputs = [
-        torch.as_tensor(sample["text_prompt_input_ids"]).clone().detach()
-        for sample in llava_model_inputs
-    ]
-    images = torch.stack([torch.as_tensor(sample["images"]) for sample in llava_model_inputs]).to(
-        dtype=torch.bfloat16
-    )
-    # images dtype casting happens here but this logic should happen elsewhere to prevent bugs
-
-    padded_text_inputs_dict = padding_tokenizer.pad(
-        encoded_inputs={"input_ids": text_inputs},
-        padding=True,
-        max_length=None,
-        return_tensors="pt",
-    )
-    text_inputs = padded_text_inputs_dict["input_ids"]
-    attention_mask = padded_text_inputs_dict["attention_mask"]
-
-    padded_expected_ouput_ids = padding_tokenizer.pad(
-        encoded_inputs={"input_ids": expected_output_ids},
-        padding=True,
-        max_length=None,
-        return_tensors="pt",
-    )
-    padded_expected_ouput_ids = padded_expected_ouput_ids["input_ids"]
-
-    return {
-        "input_ids": text_inputs,
-        "images": images,
-        "attention_mask": attention_mask,
-        "labels": padded_expected_ouput_ids,
-    }
 
 
 def get_mimic_cxr_llava_model_input_dataloader_for_sft(
@@ -553,20 +511,68 @@ def get_mimic_cxr_llava_model_input_dataloader_for_sft(
     batch_size: int,
     padding_tokenizer: PreTrainedTokenizer,
     num_workers: T.Optional[int] = None,
-    simplified_batch: bool = False,
 ) -> DataLoader:
-    collate_fn = (
-        prompted_mimic_cxr_llava_model_input_collate_fn_for_sft_simplified
-        if simplified_batch
-        else prompted_mimic_cxr_llava_model_input_collate_fn_for_sft
-    )
+
     return DataLoader(
         dataset=dataset,
         batch_size=batch_size,
-        collate_fn=lambda x: collate_fn(x, padding_tokenizer),
+        collate_fn=lambda x: prompted_mimic_cxr_llava_model_input_collate_fn_for_sft(
+            x, padding_tokenizer
+        ),
         shuffle=False,
         num_workers=num_workers if num_workers else 0,  # TODO let torch decide!
         pin_memory=True,
         drop_last=True,
         persistent_workers=True,
     )
+
+
+# Deprecated
+
+# def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft_simplified(
+#     batch: list[BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT],
+#     padding_tokenizer: PreTrainedTokenizer,
+# ) -> dict:
+
+#     llava_model_inputs, expected_output_ids = zip(
+#         *[
+#             (
+#                 item["llava_model_input_dict"],
+#                 item["expected_output_ids"],
+#             )
+#             for item in batch
+#         ]
+#     )
+
+#     text_inputs = [
+#         torch.as_tensor(sample["text_prompt_input_ids"]).clone().detach()
+#         for sample in llava_model_inputs
+#     ]
+#     images = torch.stack([torch.as_tensor(sample["images"]) for sample in llava_model_inputs]).to(
+#         dtype=torch.bfloat16
+#     )
+#     # images dtype casting happens here but this logic should happen elsewhere to prevent bugs
+
+#     padded_text_inputs_dict = padding_tokenizer.pad(
+#         encoded_inputs={"input_ids": text_inputs},
+#         padding=True,
+#         max_length=None,
+#         return_tensors="pt",
+#     )
+#     text_inputs = padded_text_inputs_dict["input_ids"]
+#     attention_mask = padded_text_inputs_dict["attention_mask"]
+
+#     padded_expected_ouput_ids = padding_tokenizer.pad(
+#         encoded_inputs={"input_ids": expected_output_ids},
+#         padding=True,
+#         max_length=None,
+#         return_tensors="pt",
+#     )
+#     padded_expected_ouput_ids = padded_expected_ouput_ids["input_ids"]
+
+#     return {
+#         "input_ids": text_inputs,
+#         "images": images,
+#         "attention_mask": attention_mask,
+#         "labels": padded_expected_ouput_ids,
+#     }

@@ -11,16 +11,16 @@ import trl
 from huggingface_hub import snapshot_download
 from LLAVA_Biovil import llava
 from LLAVA_Biovil.biovil_t.model import ImageModel
-from LLAVA_Biovil.biovil_t.pretrained import \
-    _download_biovil_t_image_model_weights
+from LLAVA_Biovil.biovil_t.pretrained import _download_biovil_t_image_model_weights
 from LLAVA_Biovil.biovil_t.types import ImageEncoderType
 from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
-from LLAVA_Biovil.llava.constants import (DEFAULT_IM_END_TOKEN,
-                                          DEFAULT_IM_START_TOKEN,
-                                          DEFAULT_IMAGE_PATCH_TOKEN)
+from LLAVA_Biovil.llava.constants import (
+    DEFAULT_IM_END_TOKEN,
+    DEFAULT_IM_START_TOKEN,
+    DEFAULT_IMAGE_PATCH_TOKEN,
+)
 from LLAVA_Biovil.llava.model import LlavaConfig
-from LLAVA_Biovil.llava.model.multimodal_projector.builder import \
-    build_vision_projector
+from LLAVA_Biovil.llava.model.multimodal_projector.builder import build_vision_projector
 from peft import LoraModel, PeftModel
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
 from trl import models as trl_models
@@ -189,11 +189,35 @@ def _load_additional_non_lora_llava_weights(
     return model
 
 
+def _get_lora_config() -> peft.LoraConfig:
+    return peft.LoraConfig(
+        r=128,
+        target_modules=[
+            "gate_proj",
+            "v_proj",
+            "o_proj",
+            "k_proj",
+            "down_proj",
+            "up_proj",
+            "q_proj",
+        ],
+        lora_alpha=256,
+        lora_dropout=0.05,
+        fan_in_fan_out=False,
+        bias="none",
+        modules_to_save=None,
+        init_lora_weights=False,  # True,
+        layers_to_transform=None,
+        layers_pattern=None,
+        task_type="CAUSAL_LM",
+    )
+
+
 def _load_lora_weights(
     model: transformers.LlamaForCausalLM, model_path: Path, is_lora_trainable: bool
 ) -> llava.model.LlavaLlamaForCausalLM:
     # TODO inaccurate typing logic here! figure it out later
-    print("Loading LoRA weights...")
+    print("Loading original RaDialog LoRA weights...")
     model = t.cast(
         llava.model.LlavaLlamaForCausalLM,
         PeftModel.from_pretrained(model, model_path, is_trainable=is_lora_trainable),
@@ -338,7 +362,7 @@ def load_pretrained_llava_model(
         skip_lora_adapters: Whether to skip loading LoRA adapters (default: False)
     """
     print(
-        "Loading model in {trainablity} mode...".format(
+        "Loading the model in {trainablity} mode...".format(
             trainablity="trainable" if is_lora_trainable else "non-trainable"
         )
     )
@@ -367,39 +391,9 @@ def load_pretrained_llava_model(
     return model
 
 
-def add_value_head_to_LlavaLlamaForCausalLM_model(
-    model: llava.model.LlavaLlamaForCausalLM,
-) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
-    return AutoModelForCausalLMWithValueHead.from_pretrained(model)
-
-
-def _get_lora_config() -> peft.LoraConfig:
-    return peft.LoraConfig(
-        r=128,
-        target_modules=[
-            "gate_proj",
-            "v_proj",
-            "o_proj",
-            "k_proj",
-            "down_proj",
-            "up_proj",
-            "q_proj",
-        ],
-        lora_alpha=256,
-        lora_dropout=0.05,
-        fan_in_fan_out=False,
-        bias="none",
-        modules_to_save=None,
-        init_lora_weights=False,  # True,
-        layers_to_transform=None,
-        layers_pattern=None,
-        task_type="CAUSAL_LM",
-    )
-
-
 def add_pretrained_RaDialog_lora_adapters_to_LlavaLlamaForCausalLM_model(
     model: llava.model.LlavaLlamaForCausalLM,
-    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+    radialog_lora_weights_path: str,
 ) -> peft.PeftModel:
 
     is_model_quantized: bool = any(
@@ -437,7 +431,7 @@ def add_pretrained_RaDialog_lora_adapters_to_LlavaLlamaForCausalLM_model(
 
 def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalLM_model(
     model: llava.model.LlavaLlamaForCausalLM,
-    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+    radialog_lora_weights_path: str,
 ) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
 
     is_model_quantized: bool = any(
@@ -478,22 +472,28 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
 
 
 def load_pretrained_llava_model_for_sft_training(
-    device_str: str = shared.torch_devices.cuda.value, precision: Precision = "16bit"
+    device_str: str = shared.torch_devices.cuda.value,
+    precision: Precision = "16bit",
+    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
 ) -> peft.PeftModel:
     model = load_pretrained_llava_model(
         skip_lora_adapters=True, device=device_str, precision=precision
     )
-    model = add_pretrained_RaDialog_lora_adapters_to_LlavaLlamaForCausalLM_model(model)
+    model = add_pretrained_RaDialog_lora_adapters_to_LlavaLlamaForCausalLM_model(
+        model, radialog_lora_weights_path=radialog_lora_weights_path
+    )
     return model
 
 
 def load_pretrained_llava_model_for_ppo_training(
-    device_str: str = shared.torch_devices.cuda.value, precision: Precision = "16bit"
+    device_str: str = shared.torch_devices.cuda.value,
+    precision: Precision = "16bit",
+    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
 ) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
     model = load_pretrained_llava_model(
         skip_lora_adapters=True, device=device_str, precision=precision
     )
     model = add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalLM_model(
-        model
+        model, radialog_lora_weights_path=radialog_lora_weights_path
     )
     return model

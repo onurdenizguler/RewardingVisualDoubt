@@ -87,6 +87,9 @@ class Conversation:
     seperator_2: Seperator
 
 
+############################################## HELPER FUNCTIONS ##############################################
+
+
 def _extract_variables_from_formattable_string(format_string):
     # This pattern matches both {var} and {"var"} patterns
     pattern = r"{([^{}]+)}|{\"([^{}\"]+)\"}"
@@ -108,6 +111,9 @@ def _sample_response_template(options: list[str]):
     index = random.randint(0, len(options) - 1)
     response_template = options[index]
     return response_template
+
+
+############################################## CONVERSATION LOGIC ##############################################
 
 
 def _add_message_to_conversation(conversation: Conversation, message: Message) -> Conversation:
@@ -151,6 +157,9 @@ def _get_vicuna_conversatio_without_system_message() -> Conversation:
     )
 
 
+############################################## PROMPT BUILDING ##############################################
+
+
 def build_report_generation_instruction_from_findings(findings: str) -> str:
     conversation = _get_vicuna_conversation()
     _add_message_to_conversation(
@@ -185,41 +194,6 @@ def build_binary_qa_instruction_from_disease_under_study(
     return _convert_conversation_into_prompt(conversation)
 
 
-def build_binary_qa_instruction_from_disease_under_study_with_confidence_example(
-    chexpert_finding_str: str,
-) -> str:
-    conversation = _get_vicuna_conversation()
-    _add_message_to_conversation(
-        conversation=conversation,
-        message=Message(role=Role.USER, text="Please provide me your response template."),
-    )
-    _add_message_to_conversation(
-        conversation=conversation,
-        message=Message(
-            role=Role.ASSISTANT,
-            text=(
-                "I will provide my responses in the following format:"
-                "<response> confidence_score: <score>"
-            ),
-        ),
-    )
-    _add_message_to_conversation(
-        conversation=conversation,
-        message=Message(
-            role=Role.USER,
-            text=BINARY_QA_INITIAL_INSTRUCTION.format(chexpert_finding_str=chexpert_finding_str),
-        ),
-    )
-    _add_message_to_conversation(
-        conversation=conversation,
-        message=Message(
-            role=Role.ASSISTANT,
-            text=None,
-        ),
-    )
-    return _convert_conversation_into_prompt(conversation)
-
-
 def build_binary_qa_instruction_from_disease_under_study_with_confidence_request(
     chexpert_finding_str: str,
 ) -> str:
@@ -244,7 +218,7 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
     chexpert_finding_str: str,
     occurrence_of_disease: bool,
     possible_confidences: list[int],
-    return_conversation: bool = False,
+    is_for_inference: bool = False,
 ) -> str:
 
     conversation = _get_vicuna_conversation()
@@ -263,23 +237,26 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
         ),
     )
 
-    response_template = _sample_response_template(
-        options=(
-            prompts.BINARY_QA_POSTIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS
-            if occurrence_of_disease
-            else prompts.BINARY_QA_NEGATIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS
-        )
-    )
-
-    formattable_variables = _extract_variables_from_formattable_string(response_template)
-    if "finding" in formattable_variables:
-        assistant_response = response_template.format(
-            finding=chexpert_finding_str, confidence_score=random.choice(possible_confidences)
-        )
+    if is_for_inference:
+        assistant_response = None
     else:
-        assistant_response = response_template.format(
-            confidence_score=random.choice(possible_confidences)
+        response_template = _sample_response_template(
+            options=(
+                prompts.BINARY_QA_POSTIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS
+                if occurrence_of_disease
+                else prompts.BINARY_QA_NEGATIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS
+            )
         )
+
+        formattable_variables = _extract_variables_from_formattable_string(response_template)
+        if "finding" in formattable_variables:
+            assistant_response = response_template.format(
+                finding=chexpert_finding_str, confidence_score=random.choice(possible_confidences)
+            )
+        else:
+            assistant_response = response_template.format(
+                confidence_score=random.choice(possible_confidences)
+            )
 
     _add_message_to_conversation(
         conversation=conversation,
@@ -288,31 +265,7 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
     return _convert_conversation_into_prompt(conversation)
 
 
-def build_binary_qa_prompt_with_response_and_confidence_for_inference(
-    chexpert_finding_str: str,
-) -> str:
-
-    conversation = _get_vicuna_conversation()
-
-    question_template = _sample_response_template(options=prompts.BINARY_QA_USER_QUESTION_OPTIONS)
-    question = question_template.format(finding=chexpert_finding_str)
-    instruction = (
-        BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION + question
-    )
-
-    _add_message_to_conversation(
-        conversation=conversation,
-        message=Message(
-            role=Role.USER,
-            text=instruction,
-        ),
-    )
-
-    _add_message_to_conversation(
-        conversation=conversation,
-        message=Message(role=Role.ASSISTANT, text=None),
-    )
-    return _convert_conversation_into_prompt(conversation)
+############################################## DEPRECATED PROMPT BUILDING ##############################################
 
 
 def build_post_generation_user_confidence_request() -> str:
@@ -329,3 +282,40 @@ def build_post_generation_user_confidence_request() -> str:
         message=Message(role=Role.ASSISTANT, text=POST_GENERATION_ASSISTANT_CONFIDENCE_COMPLIANCE),
     )
     return _convert_conversation_into_prompt(conversation)
+
+
+# Deprecated
+
+# def build_binary_qa_instruction_from_disease_under_study_with_confidence_example(
+#     chexpert_finding_str: str,
+# ) -> str:
+#     conversation = _get_vicuna_conversation()
+#     _add_message_to_conversation(
+#         conversation=conversation,
+#         message=Message(role=Role.USER, text="Please provide me your response template."),
+#     )
+#     _add_message_to_conversation(
+#         conversation=conversation,
+#         message=Message(
+#             role=Role.ASSISTANT,
+#             text=(
+#                 "I will provide my responses in the following format:"
+#                 "<response> confidence_score: <score>"
+#             ),
+#         ),
+#     )
+#     _add_message_to_conversation(
+#         conversation=conversation,
+#         message=Message(
+#             role=Role.USER,
+#             text=BINARY_QA_INITIAL_INSTRUCTION.format(chexpert_finding_str=chexpert_finding_str),
+#         ),
+#     )
+#     _add_message_to_conversation(
+#         conversation=conversation,
+#         message=Message(
+#             role=Role.ASSISTANT,
+#             text=None,
+#         ),
+#     )
+#     return _convert_conversation_into_prompt(conversation)
