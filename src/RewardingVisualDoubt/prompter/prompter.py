@@ -124,9 +124,7 @@ def _convert_conversation_into_prompt(conversation: Conversation) -> str:
         prompt = conversation.system + seps[0]
     for i, message in enumerate(messages):
         if message.text:
-            prompt += (
-                message.role.value + ": " + message.text + seps[0]
-            )  # seps[i % 2] # TODO do not EOS the sequences for now (PoC phase)
+            prompt += message.role.value + ": " + message.text + seps[i % 2]
         else:
             prompt += message.role.value + ":"
 
