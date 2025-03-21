@@ -34,4 +34,3 @@ def generate_radialog_answer_for_binary_qa_for_single_study(
         )
     pred = tokenizer.decode(output_ids[0, input_ids.shape[1] :]).strip().replace("</s>", "")
     return pred
-    pass
