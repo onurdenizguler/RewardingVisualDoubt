@@ -2,6 +2,7 @@ import os
 import typing as t
 from pathlib import Path
 from re import L
+import enum
 
 import bitsandbytes
 import peft
@@ -30,9 +31,14 @@ from RewardingVisualDoubt import shared
 LLAVA_BASE_MODEL_NAME = "liuhaotian/llava-v1.5-7b"
 LLAVA_LORA_ADAPTER = "llava-v1.5-7b-task-lora_radialog_instruct_llava_biovil_unfrozen_2e-5_5epochs_v5_checkpoint-21000"
 FINETUNED_LLAVA_REPO_ID = "ChantalPellegrini/RaDialog-interactive-radiology-report-generation"
-RADIALOG_LORA_WEIGHTS_PATH = (
-    "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/RaDialog_adapter_model.bin"
-)
+
+
+class RadialogLoraWeightsPath(enum.Enum):
+    ORIGINAL = (
+        "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/RaDialog_adapter_model.bin"
+    )
+    BINARY_QA_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/training_checkpoints/best_model_epoch0_step179.pth/adapter_model.bin"
+
 
 Precision = t.Literal["16bit", "8bit", "4bit"]
 
@@ -97,7 +103,7 @@ def _extract_lora_config_from_model(model: LlavaLlamaForCausalLM) -> peft.LoraCo
 
 
 def _load_lora_weights_in_state_dict_format_for_radialog(
-    lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+    lora_weights_path: str,
     is_target_model_with_value_head: bool = True,
 ) -> dict[str, torch.Tensor]:
 
@@ -474,8 +480,11 @@ def add_pretrained_RaDialog_lora_adapters_and_value_head_to_LlavaLlamaForCausalL
 def load_pretrained_llava_model_for_sft_training(
     device_str: str = shared.torch_devices.cuda.value,
     precision: Precision = "16bit",
-    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+    radialog_lora_weights_path: str = RadialogLoraWeightsPath.ORIGINAL.value,
 ) -> peft.PeftModel:
+    print(
+        f"Adding LoRA adapters to the model for SFT training or inference from Radialog Lora Weights path: {radialog_lora_weights_path}"
+    )
     model = load_pretrained_llava_model(
         skip_lora_adapters=True, device=device_str, precision=precision
     )
@@ -488,8 +497,11 @@ def load_pretrained_llava_model_for_sft_training(
 def load_pretrained_llava_model_for_ppo_training(
     device_str: str = shared.torch_devices.cuda.value,
     precision: Precision = "16bit",
-    radialog_lora_weights_path: str = RADIALOG_LORA_WEIGHTS_PATH,
+    radialog_lora_weights_path: str = RadialogLoraWeightsPath.ORIGINAL.value,
 ) -> trl_models.modeling_value_head.AutoModelForCausalLMWithValueHead:
+    print(
+        f"Adding LoRA adapters and value head to the model for PPO training using Radialog Lora Weights path: {radialog_lora_weights_path}"
+    )
     model = load_pretrained_llava_model(
         skip_lora_adapters=True, device=device_str, precision=precision
     )

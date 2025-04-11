@@ -280,7 +280,7 @@ def train(
         "min_length": -1,  # don't ignore the EOS token (see above)
         "top_k": 0.0,  # no top-k sampling
         "top_p": 1.0,  # no nucleus sampling
-        "temperature": 0.5,  # DONT BE CREATIVE
+        "temperature": 1.0,  # DONT BE CREATIVE
         "do_sample": True,  # yes, we want to sample
         "pad_token_id": tokenizer.pad_token_id,  # most decoder models don't have a padding token - use EOS token instead (for this tokenizer it was already set to eos_token_id)
         "max_new_tokens": 50,  # let's not be chatty, we need a few tokens to generate confidence but also not limit the response too much
