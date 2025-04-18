@@ -1,7 +1,6 @@
 import torch
 import numpy as np
 
-from RewardingVisualDoubt import dataset
 import trl
 from trl.models import PreTrainedModelWrapper
 from trl.core import (
@@ -14,9 +13,12 @@ from trl.core import (
 )
 import time
 import math
-from typing import Callable, List, Optional, Union
+import peft
+from typing import List
+import typing as t
 
 
+IGNORE_INDEX = -100
 LLAVA_IMAGE_TOKEN_INDEX = -200  # as defined by the llava repo
 TOKEN_INDEX_OF_THE_WORD_IMAGE = (
     1967  # 1967 is the index of the image token in the tokenizer (the word image)
@@ -89,12 +91,240 @@ def replace_image_token_with_another_token_for_list_of_tensors(
     ]
 
 
+def get_likeliest_token_from_logits(
+    logits: torch.Tensor,
+):
+    """
+    Get the most likely token from the logits
+    Args:
+        logits: torch.Tensor of shape (batch_size, sequence_length, vocab_size)
+    Returns:
+        torch.Tensor of shape (batch_size, sequence_length)
+    """
+    # Get the most likely token from the logits
+    return torch.argmax(logits, dim=-1)
+
+
+#############################################################################################
+# Custom logic to get the indexes of the embeddings representing the input images in a batch
+# built upon llava-biovil codebase's prepare_inputs_labels_for_multimodal() in LlavaMetaModel
+#############################################################################################
+
+from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
+
+
+def get_llava_image_embedding_index_range_for_multimodal_batch_for_ppo(
+    model: (
+        LlavaLlamaForCausalLM | trl.AutoModelForCausalLMWithValueHead | trl.PreTrainedModelWrapper
+    ),
+    input_ids,
+    attention_mask,
+    images: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Get the indexes of the embeddings representing the input images in a batch
+    Args:
+        input_ids: torch.Tensor of shape (batch_size, sequence_length)
+        attention_mask: torch.Tensor of shape (batch_size, sequence_length)
+        images: torch.Tensor of shape (batch_size, rgb_dim, height, weight)
+        typically (batch_size, 3, 448, 448) for Radialog images given the processing pipeline
+    """
+    if isinstance(model, trl.PreTrainedModelWrapper):
+        model = t.cast(trl.AutoModelForCausalLMWithValueHead, model)
+    if not isinstance(model, LlavaLlamaForCausalLM):
+        if isinstance(model, trl.AutoModelForCausalLMWithValueHead):
+            model_ = model.pretrained_model
+        if isinstance(model_, peft.PeftModelForCausalLM):
+            model_ = model_.base_model.model
+        assert isinstance(
+            model_, LlavaLlamaForCausalLM
+        ), "Model must be an instance of LlavaLlamaForCausalLM or a PeftModelForCausalLM"
+    else:
+        model_ = model
+    model_ = t.cast(LlavaLlamaForCausalLM, model_)
+
+    image_features = model_.encode_images(images).to(model_.device)
+    attention_mask = attention_mask.clone().detach().bool()
+
+    # 1. Remove paddings using attention_mask
+    input_ids = [
+        cur_input_ids[cur_attention_mask]
+        for cur_input_ids, cur_attention_mask in zip(input_ids, attention_mask)
+    ]
+
+    # 2. Go over each sequence in the batch and create a list of input embeddings
+    new_input_embeds_list_batch: list[torch.Tensor] = (
+        []
+    )  # The input embeddings with image embeddings inserted
+    image_indicator_mask_list_batch: list[torch.Tensor] = (
+        []
+    )  # list of tensors indicating whether the index carries and image embedding
+    expanded_input_ids_list_batch: list[torch.Tensor] = (
+        []
+    )  # The input ids expanded with <unk> token index (0) where an image embedding is inserted
+
+    cur_image_idx = 0
+    for batch_idx, cur_input_ids in enumerate(input_ids):
+
+        # 2.1 Determine num_images and the indices where image tokens occur
+        num_images = (cur_input_ids == LLAVA_IMAGE_TOKEN_INDEX).sum()
+        image_token_indices = (
+            [-1]
+            + torch.where(cur_input_ids == LLAVA_IMAGE_TOKEN_INDEX)[0].tolist()
+            + [cur_input_ids.shape[0]]
+        )
+
+        # 2.2 Collect the token_ids in the splits without images into a list
+        cur_input_ids_noim = []
+        for i in range(len(image_token_indices) - 1):
+            cur_input_ids_noim.append(
+                cur_input_ids[image_token_indices[i] + 1 : image_token_indices[i + 1]]
+            )
+        split_sizes = [x.shape[0] for x in cur_input_ids_noim]
+
+        # 2.3 Embed the text tokens using the model and split them into a tuple of splits
+        cur_input_embeds = model_.get_model().embed_tokens(torch.cat(cur_input_ids_noim))
+        cur_input_embeds_no_im: list[torch.Tensor] = torch.split(
+            cur_input_embeds, split_sizes, dim=0
+        )
+
+        # 2.4 Insert the image embeddings in between the splits and collect indicators showing at which indexes the image embeddings occur
+        cur_new_input_embeds = []
+        cur_image_token_indicators_list = []
+        cur_expanded_input_ids_list = []
+        for i in range(num_images + 1):
+            cur_new_input_embeds.append(cur_input_embeds_no_im[i])
+            cur_expanded_input_ids_list.append(cur_input_ids_noim[i])
+            cur_image_token_indicators_list.append(
+                torch.zeros(
+                    split_sizes[i], dtype=attention_mask.dtype, device=attention_mask.device
+                )
+            )
+            if i < num_images:
+                cur_image_features = image_features[cur_image_idx]
+                cur_image_idx += 1
+                cur_new_input_embeds.append(cur_image_features)
+                cur_expanded_input_ids_list.append(
+                    torch.zeros(
+                        cur_image_features.shape[0],
+                        dtype=cur_input_ids.dtype,
+                        device=cur_input_ids.device,
+                    )
+                )
+                cur_image_token_indicators_list.append(
+                    torch.ones(
+                        cur_image_features.shape[0],
+                        dtype=attention_mask.dtype,
+                        device=attention_mask.device,
+                    )
+                )
+        cur_new_input_embeds = torch.cat(cur_new_input_embeds)
+        cur_expanded_input_ids_tensor: torch.Tensor = torch.cat(cur_expanded_input_ids_list)
+        cur_image_token_indicators_tensor: torch.Tensor = torch.cat(cur_image_token_indicators_list)
+
+        new_input_embeds_list_batch.append(cur_new_input_embeds)
+        expanded_input_ids_list_batch.append(cur_expanded_input_ids_tensor)
+        image_indicator_mask_list_batch.append(cur_image_token_indicators_tensor)
+
+    # 3. Truncate sequences to max length as image embeddings can make the sequence longer
+    tokenizer_model_max_length = getattr(model_.config, "tokenizer_model_max_length", None)
+    if tokenizer_model_max_length:
+        max_len_orig = max(x.shape[0] for x in new_input_embeds_list_batch)
+        if max_len_orig > tokenizer_model_max_length:
+            print(
+                f"Truncating sequences of len {max_len_orig} to {tokenizer_model_max_length} to fit the model's input length"
+            )
+        new_input_embeds_list_batch = [
+            x[:tokenizer_model_max_length] for x in new_input_embeds_list_batch
+        ]
+        expanded_input_ids_list_batch = [
+            x[:tokenizer_model_max_length] for x in expanded_input_ids_list_batch
+        ]
+        image_indicator_mask_list_batch = [
+            x[:tokenizer_model_max_length] for x in image_indicator_mask_list_batch
+        ]
+
+    # 4. Combine the list of input embeddings into a single tensor via padding
+    max_len = max(x.shape[0] for x in new_input_embeds_list_batch)
+    batch_size = len(new_input_embeds_list_batch)
+
+    # 4.1 Pad the list of sequences to the same length and combine them into a single tensor
+    new_input_embeds_list_batch_padded = []
+    expanded_input_ids_list_batch_padded = []
+    image_indicator_mask_list_batch_padded = []
+    attention_mask = torch.zeros(
+        (batch_size, max_len), dtype=attention_mask.dtype, device=attention_mask.device
+    )
+    for i, cur_new_embed in enumerate(new_input_embeds_list_batch):
+        cur_len = cur_new_embed.shape[0]
+        assert (
+            getattr(model.config, "tokenizer_padding_side", "right") == "left"
+        )  # We pad from the left assuming a decoder-only model
+        new_input_embeds_list_batch_padded.append(
+            torch.cat(
+                (
+                    torch.zeros(
+                        (max_len - cur_len, cur_new_embed.shape[1]),
+                        dtype=cur_new_embed.dtype,
+                        device=cur_new_embed.device,
+                    ),
+                    cur_new_embed,
+                ),
+                dim=0,
+            )
+        )
+        expanded_input_ids_list_batch_padded.append(
+            torch.cat(
+                (
+                    torch.zeros(
+                        (max_len - cur_len),
+                        dtype=attention_mask.dtype,
+                        device=attention_mask.device,
+                    ),
+                    expanded_input_ids_list_batch[i],
+                ),
+                dim=0,
+            )
+        )
+        image_indicator_mask_list_batch_padded.append(
+            torch.cat(
+                (
+                    torch.zeros(
+                        (max_len - cur_len),
+                        dtype=attention_mask.dtype,
+                        device=attention_mask.device,
+                    ),
+                    image_indicator_mask_list_batch[i],
+                ),
+                dim=0,
+            )
+        )
+        if cur_len > 0:
+            attention_mask[i, -cur_len:] = True
+
+    # 4.2 Stack the list of tensors into single tensors
+    final_input_embeds: torch.Tensor = torch.stack(new_input_embeds_list_batch_padded, dim=0)
+    final_expanded_input_ids: torch.Tensor = torch.stack(
+        expanded_input_ids_list_batch_padded, dim=0
+    )
+    final_image_indicator_mask: torch.Tensor = torch.stack(
+        image_indicator_mask_list_batch_padded, dim=0
+    )
+
+    return final_input_embeds, attention_mask, final_image_indicator_mask, final_expanded_input_ids
+
+
 #############################################################################################
 # Inherit from trl. PPOTrainer to define a MultimodalPPOTrainer allowing for image input
 #############################################################################################
 
 
 class MultimodalPPOTrainer(trl.PPOTrainer):
+
+    def step(self) -> None:
+        raise NotImplementedError(
+            "The step function is not implemented for MultimodalPPOTrainer. Use multimodal_step instead."
+        )
 
     @PPODecorators.empty_cuda_cache()
     def multimodal_step(
@@ -354,17 +584,16 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
                 - all_values (`torch.FloatTensor`): Values of the responses, shape (`batch_size`, `response_length`)
         """
         # The modifications made on the original non-multimodal batched_forward_pass function are marked with a # N comment
+        assert (
+            not self.is_encoder_decoder
+        ), "Encoder-decoder models are not supported in this implementation"
+
         bs = len(queries)
         fbs = self.config.mini_batch_size
         all_logprobs = []
         all_logits = []
         all_masks = []
         all_values = []
-
-        # TODO
-        # For each sequence, determine the range of logits which represent the image embeddings
-        # Select just the most probable token for the image embedding tokens
-        # Mask out the entire image region
 
         for i in range(math.ceil(bs / fbs)):
             input_kwargs = {
@@ -373,36 +602,31 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
             query_batch = queries[i * fbs : (i + 1) * fbs]
             response_batch = responses[i * fbs : (i + 1) * fbs]
             logits, _, values = model(**input_kwargs)
-            print(model_inputs["input_ids"].shape)
-            print(values.shape)
 
-            if self.is_encoder_decoder:
-                input_ids = input_kwargs["decoder_input_ids"]
-                attention_mask = input_kwargs["decoder_attention_mask"]
-            else:
-                input_ids = input_kwargs["input_ids"]
-                attention_mask = input_kwargs["attention_mask"]
+            input_ids = input_kwargs["input_ids"]
+            attention_mask = input_kwargs["attention_mask"]
 
-            input_ids_without_image_token = replace_image_token_with_another_token(
-                input_ids.clone().detach(), replacement_token_id=0
+            _, attention_mask, image_indicator_mask, input_ids = (
+                get_llava_image_embedding_index_range_for_multimodal_batch_for_ppo(
+                    model=model,
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    images=input_kwargs["images"],
+                )
             )  # N
-            logprobs = logprobs_from_logits(
-                logits[:, :-1, :], input_ids_without_image_token[:, 1:]
-            )  # N (modified)
-            print(logprobs.shape)
+
+            logprobs = logprobs_from_logits(logits[:, :-1, :], input_ids[:, 1:])
             masks = torch.zeros_like(attention_mask)
             masks[:, :-1] = attention_mask[:, 1:]
 
             for j in range(len(query_batch)):
-                if self.is_encoder_decoder:
-                    # Decoder sentence starts always in the index 1 after padding in the Enc-Dec Models
-                    start = 1
-                    end = attention_mask[j, :].sum() - 1
-                else:
-                    start = len(query_batch[j]) - 1
-                    if attention_mask[j, 0] == 0:  # offset left padding
-                        start += attention_mask[j, :].nonzero()[0]
-                    end = start + len(response_batch[j])
+                num_image_embedding_tokens_in_query = (
+                    image_indicator_mask[j].nonzero(as_tuple=True)[0].shape[0]
+                )
+                start = len(query_batch[j]) + num_image_embedding_tokens_in_query - 1
+                if attention_mask[j, 0] == 0:  # offset left padding
+                    start += attention_mask[j, :].nonzero()[0]
+                end = start + len(response_batch[j])
 
                 masks[j, :start] = 0
                 masks[j, end:] = 0
@@ -415,9 +639,72 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
             all_logprobs.append(logprobs)
             all_masks.append(masks)
 
+            all_logits, all_values, all_logprobs, all_masks = self.pad_mini_batches(
+                all_logits,
+                all_values,
+                all_logprobs,
+                all_masks,
+            )
+
         return (
             torch.cat(all_logprobs),
-            torch.cat(all_logits)[:, :-1] if return_logits else None,
+            torch.cat(all_logits)[:, :-1] if all_logits else None,
             torch.cat(all_values)[:, :-1],
             torch.cat(all_masks)[:, :-1],
         )
+
+    @classmethod
+    def pad_mini_batches(
+        cls,
+        all_logits: list[torch.Tensor],
+        all_values: list[torch.Tensor],
+        all_logprobs: list[torch.Tensor],
+        all_masks: list[torch.Tensor],
+    ) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
+        """
+        Pad the mini-batches to the maximum sequence length in the batch.
+        Args:
+            all_logits: list[Tensor] List of logits tensors.
+            all_values: list[Tensor] of values tensors.
+            all_logprobs: list[Tensor] of logprobs tensors.
+            all_masks: list[Tensor] of masks tensors.
+        Returns:
+            Padded logits, values, logprobs, and masks tensors."""
+
+        max_seq_len = max(
+            t.shape[1] for t in all_values
+        )  # values, logits, masks all share full length
+        max_logprobs_seq_len = max_seq_len - 1  # logprobs has one less
+
+        def pad_tensor_list(tensor_list, target_len, pad_fn, pad_value=0):
+            padded = []
+            for t in tensor_list:
+                pad_len = target_len - t.shape[1]  # 0th dim is batch size, 1st dim is seq_len
+                if pad_len == 0:
+                    padded.append(t)
+                else:
+                    padded_tensor = pad_fn(t, pad_len, pad_value)
+                    padded.append(padded_tensor)
+            return padded
+
+        # Padding functions
+        def pad_logits(t, pad_len, pad_value):
+            return torch.nn.functional.pad(
+                t, (0, 0, pad_len, 0), value=pad_value
+            )  # pad from the left along dim=1 (seq_len)
+
+        def pad_2d(t, pad_len, pad_value):
+            return torch.nn.functional.pad(
+                t, (pad_len, 0), value=pad_value
+            )  # pad from the left along dim=1 (seq_len)
+
+        # Apply padding
+        if all_logits:
+            padded_logits = pad_tensor_list(all_logits, max_seq_len, pad_logits)
+        else:
+            padded_logits = all_logits
+        padded_values = pad_tensor_list(all_values, max_seq_len, pad_2d)
+        padded_masks = pad_tensor_list(all_masks, max_seq_len, pad_2d)
+        padded_logprobs = pad_tensor_list(all_logprobs, max_logprobs_seq_len, pad_2d)
+
+        return padded_logits, padded_values, padded_logprobs, padded_masks
