@@ -51,11 +51,12 @@ def radialog_binary_qa_ppo_training_step(
     device: torch.device,
     tokenizer: transformers.PreTrainedTokenizer,
     generation_kwargs_ppo: dict,
-    ppo_trainer: training.MultimodalPPOTrainer,
+    ppo_trainer: trl.PPOTrainer,
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
 ):
 
     ######### 5.1 Unpack the batch #########
+    batch: dataset.MimicCxrLlavaModelInputBatchDict = batch
     batch_llava_model_input_dict = batch["batch_llava_model_input_dict"]
     batch_llava_model_input_dict = dataset.move_llava_model_input_dict_to_device(
         batch_llava_model_input_dict, device
@@ -64,34 +65,83 @@ def radialog_binary_qa_ppo_training_step(
         batch_llava_model_input_dict["text_prompt_input_ids"],
         batch_llava_model_input_dict["images"],
     )
-    attention_mask = batch["batch_attention_mask"].to(
-        device
-    )  # WARNING: Unused, as the ppo_trainer.generate() method handles padding and batching itself
+    attention_mask = batch["batch_attention_mask"].to(device)
     labels = t.cast(torch.Tensor, batch["batch_labels"]).to(device)
     stopping_criteria = KeywordsStoppingCriteria([STOP_STR], tokenizer, input_ids)
-    input_ids_list = training.remove_preciding_padding_from_batch_tensor(
-        input_ids
-    )  # WARNING: Is performed, as the ppo_trainer.generate() method handles padding and batching itself
 
     ######### 5.2 Generate the binary q&a answer and remove trailing padding tokens #########
-    # model.eval()
-    model.gradient_checkpointing_disable()
-    generated_ids = ppo_trainer.generate(
-        query_tensor=input_ids_list,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
+    model.eval()
+    prompt_and_generated_answers_ids = model.generate(
+        input_ids=input_ids,
+        images=images,
+        attention_mask=attention_mask,
+        do_sample=False,
+        use_cache=True,
+        max_new_tokens=300,
+        stopping_criteria=[stopping_criteria],
+        pad_token_id=tokenizer.pad_token_id,
+    )
+
+    prompt_and_generated_answers_ids = training.remove_trailing_padding_from_prediction(
+        prompt_and_generated_answers_ids, tokenizer.pad_token_id
+    )
+
+    ######### 5.3 Append confidence request to the generated answers #########
+    prompt_and_generated_answers_with_confidence_requests_ids = []
+    for item in prompt_and_generated_answers_ids:
+        confidence_request_input_ids = (
+            tokenizer(
+                prompter.build_post_generation_user_confidence_request(),
+                return_tensors="pt",
+            )
+            .input_ids.to(device)
+            .squeeze(0)
+        )[
+            1:
+        ]  # drop start of sequence token
+        prompt_and_generated_answers_with_confidence_requests_ids.append(
+            torch.cat((item, confidence_request_input_ids), 0)
+        )
+
+    ######### 5.4 Generate the confidences #########
+    model.train()
+    generated_confidences_ids = ppo_trainer.generate(
+        prompt_and_generated_answers_with_confidence_requests_ids,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
         images=images,
         return_prompt=False,
-        batch_size=input_ids.shape[0],
-        use_cache=True,  # => not compatible with gradient checkpointing, that's why we disable it here.
-        stopping_criteria=[stopping_criteria],
         **generation_kwargs_ppo,
     )
 
-    ######### 5.3 Parse the responses and compute the scores #########
-    generated_texts = tokenizer.batch_decode(generated_ids)
-    generated_answer_labels = response.parse_binary_labels(generated_texts)
-    generated_confidence_values = response.parse_confidences(generated_texts)
+    ######### 5.5 Arrange all generations into useful variables #########
+    complete_conversation_ids = [
+        torch.cat((p, c), 0)
+        for p, c in zip(
+            prompt_and_generated_answers_with_confidence_requests_ids,
+            generated_confidences_ids,
+        )
+    ]
+    generated_answer_only_ids = [
+        prompt_and_generated_answers_ids[i][len(input_ids[i]) :] for i in range(len(input_ids))
+    ]
+    prompt_and_generated_answers_with_confidence_requests_ids = (
+        training.replace_image_token_with_another_token_for_list_of_tensors(
+            prompt_and_generated_answers_with_confidence_requests_ids
+        )
+    )
+    generated_answers_texts = tokenizer.batch_decode(
+        generated_answer_only_ids,
+        skip_special_tokens=True,
+    )
+    generated_confidences_texts = tokenizer.batch_decode(
+        generated_confidences_ids,
+        skip_special_tokens=True,
+    )
 
-    scores = [
+    ######### 5.6 Parse the responses and compute the rewards #########
+    generated_answer_labels = response.parse_binary_labels(generated_answers_texts)
+    generated_confidence_values = response.parse_confidences(generated_confidences_texts)
+
+    rewards = [
         reward.generated_answer_and_confidence_to_reward(
             generated_answer_label, generated_confidence_value, ground_truth_label
         )
@@ -100,20 +150,19 @@ def radialog_binary_qa_ppo_training_step(
         )
     ]
 
-    scores = t.cast(
+    rewards = t.cast(
         list[torch.FloatTensor],
-        [torch.tensor(s).to(device) for s in scores],
+        [torch.tensor(r).to(device) for r in rewards],
     )
 
     ######### 5.7 Take a PPO optimization step #########
-    model.train()
-    model.pretrained_model.enable_input_require_grads()
-    model.gradient_checkpointing_enable()
-    stats = ppo_trainer.multimodal_step(
-        queries=t.cast(list[torch.LongTensor], input_ids_list),
-        responses=t.cast(list[torch.LongTensor], generated_ids),
-        scores=scores,
-        images=images,
+    stats = ppo_trainer.step(
+        queries=t.cast(
+            list[torch.LongTensor],
+            prompt_and_generated_answers_with_confidence_requests_ids,
+        ),
+        responses=t.cast(list[torch.LongTensor], generated_answer_only_ids),
+        scores=rewards,
     )
 
     ######### 5.8 Create a report and log the training stats #########
@@ -124,23 +173,19 @@ def radialog_binary_qa_ppo_training_step(
     #     ),
     #     skip_special_tokens=True,
     # )
-    # batch_report["query"] = tokenizer.batch_decode(
-    #     prompt_and_generated_answers_with_confidence_requests_ids, skip_special_tokens=True
-    # )
-    # batch_report["response"] = generated_confidence_values
-    # # batch_report["generated_answer_labels"] = generated_answer_labels
-    # batch_report["generated_answers_texts"] = generated_answers_texts
-    # batch_report["generated_confidences_texts"] = generated_confidences_texts
-    stats["HELLO"] = 5
     batch_report["query"] = tokenizer.batch_decode(
-        training.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
+        prompt_and_generated_answers_with_confidence_requests_ids, skip_special_tokens=True
     )
-    batch_report["response"] = generated_texts
+    batch_report["response"] = generated_confidence_values
+    # batch_report["generated_answer_labels"] = generated_answer_labels
+    batch_report["generated_answers_texts"] = generated_answers_texts
+    batch_report["generated_confidences_texts"] = generated_confidences_texts
+
     ppo_trainer.log_stats(
-        stats=stats, batch=batch_report, rewards=scores
+        stats=stats, batch=batch_report, rewards=rewards
     )  # The game logs will not be logged because the batch does not contain the keys 'query' and 'response'
 
-    # return rewards, batch_report
+    return rewards, batch_report
 
 
 # %%
@@ -180,14 +225,11 @@ def train(
 
     ######################################## 1. Load the model and tokenizer ########################################
 
-    print("Loading the model and tokenizer...")
     model = vllm.load_pretrained_llava_model_for_ppo_training(
         device_str=device_str,
         precision="4bit",
         radialog_lora_weights_path=vllm.RadialogLoraWeightsPath.BINARY_QA_WITH_CONFIDENCE_SFT.value,
     )
-    print("Model loaded.")
-    model.pretrained_model.print_trainable_parameters()
 
     tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
         model_base=vllm.LLAVA_BASE_MODEL_NAME
@@ -196,12 +238,6 @@ def train(
         model_base=vllm.LLAVA_BASE_MODEL_NAME
     )
     padding_tokenizer.padding_side = "left"
-
-    # TODO: not sure if needed but just to be safe for now (remove when sure)
-    tokenizer.padding_side = "left"
-    model.config.padding_side = "left"
-    model.config.tokenizer_padding_side = "left"
-    # model.pad_token_id = tokenizer.eos_token_id
 
     ######################################## 2. Load the datasets and the dataloaders ########################################
 
@@ -271,8 +307,8 @@ def train(
     ######################################## 4. Get trainer and set training aspirations ########################################
 
     ppo_trainer = t.cast(
-        training.MultimodalPPOTrainer,
-        training.MultimodalPPOTrainer(
+        trl.PPOTrainer,
+        trl.PPOTrainer(
             model=model,
             config=ppo_config,
             tokenizer=tokenizer,
@@ -288,8 +324,6 @@ def train(
         rewards_until_checkpoint = []
 
         for step, batch in enumerate(dataloader_train):
-
-            batch: dataset.MimicCxrLlavaModelInputBatchDict = batch
 
             ######### 5.1 - 5.8 Perform a training step #########
             rewards, batch_report = radialog_binary_qa_ppo_training_step(
