@@ -31,13 +31,14 @@ from RewardingVisualDoubt import shared
 LLAVA_BASE_MODEL_NAME = "liuhaotian/llava-v1.5-7b"
 LLAVA_LORA_ADAPTER = "llava-v1.5-7b-task-lora_radialog_instruct_llava_biovil_unfrozen_2e-5_5epochs_v5_checkpoint-21000"
 FINETUNED_LLAVA_REPO_ID = "ChantalPellegrini/RaDialog-interactive-radiology-report-generation"
+MODEL_SAVING_DIR = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models"
 
 
 class RadialogLoraWeightsPath(enum.Enum):
     ORIGINAL = (
         "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/RaDialog_adapter_model.bin"
     )
-    BINARY_QA_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/training_checkpoints/best_model_epoch0_step179.pth/adapter_model.bin"
+    BINARY_QA_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_with_confidence_sft_resulting_adapter.pth/adapter_model.bin"
 
 
 Precision = t.Literal["16bit", "8bit", "4bit"]
@@ -152,7 +153,7 @@ def _modify_model_for_image_input(
 
 
 def _load_base_LlavaLamaForCausalLM_model(
-    model_base: str, model_path: Path, **kwargs
+    model_base: str, model_path: Path, skip_vision_projector: bool = False, **kwargs
 ) -> llava.model.LlavaLlamaForCausalLM:
 
     print("Model base: ", model_base)
@@ -177,7 +178,7 @@ def _load_base_LlavaLamaForCausalLM_model(
             torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype)
         )
 
-    if model.config.mm_vision_tower == "biovil":
+    if not skip_vision_projector and model.config.mm_vision_tower == "biovil":
         # reset mm_projector as wrong shape is loaded from pretrained base model
         model.model.mm_projector = build_vision_projector(model.config)
         model.model.mm_projector.to(device=model.device, dtype=model.dtype)
@@ -186,11 +187,19 @@ def _load_base_LlavaLamaForCausalLM_model(
 
 
 def _load_additional_non_lora_llava_weights(
-    model: transformers.LlamaForCausalLM, model_path: Path
+    model: transformers.LlamaForCausalLM,
+    model_path: Path,
+    skip_vision_related_weights: bool = False,
 ) -> transformers.LlamaForCausalLM:
 
     print("Loading additional LLaVA weights...")
     non_lora_trainables = _get_non_lora_trainables(model_path)
+    if skip_vision_related_weights:
+        non_lora_trainables = {
+            k: v
+            for k, v in non_lora_trainables.items()
+            if not ("mm_projector" in k or "vision_tower" in k)
+        }
     model.load_state_dict(non_lora_trainables, strict=False)
     return model
 
@@ -397,6 +406,42 @@ def load_pretrained_llava_model(
     return model
 
 
+def load_pretrained_llava_model_without_vision_support_and_without_lora_adapters(
+    model_path: Path = _get_hf_model_path(repo_id=FINETUNED_LLAVA_REPO_ID),
+    model_base=LLAVA_BASE_MODEL_NAME,
+    device_map="auto",
+    device: str = shared.torch_devices.cuda.value,
+    precision: Precision = "16bit",
+    **kwargs,
+) -> llava.model.LlavaLlamaForCausalLM:
+    """
+    Load the pretrained LLaVA model without any vision support.
+    args:
+        model_path: Path to the model checkpoint
+        model_base: Base model name
+        device_map: Device map
+        device: Device  (default: "cuda")
+        precision: Precision of the model (default: "16bit")
+    """
+    print(
+        "Loading the model in without vision support and withour LoRA adapters, freezing all layers..."
+    )
+
+    kwargs = _resolve_model_configuration(kwargs, device, device_map, precision)
+    model = _load_base_LlavaLamaForCausalLM_model(
+        model_base, model_path, skip_vision_projector=True, **kwargs
+    )
+    model = _load_additional_non_lora_llava_weights(
+        model, model_path, skip_vision_related_weights=True
+    )
+    # Configure padding side
+    model.config.tokenizer_padding_side = "left"  # TODO why?
+    # Prepare for inference or training
+    model = t.cast(llava.model.LlavaLlamaForCausalLM, model)
+    _freeze_all_params(model)
+    return model
+
+
 def add_pretrained_RaDialog_lora_adapters_to_LlavaLlamaForCausalLM_model(
     model: llava.model.LlavaLlamaForCausalLM,
     radialog_lora_weights_path: str,
@@ -509,3 +554,23 @@ def load_pretrained_llava_model_for_ppo_training(
         model, radialog_lora_weights_path=radialog_lora_weights_path
     )
     return model
+
+
+def save_merged_radialog_lora_model_to_local_dir(
+    model_save_name: str,
+    radialog_lora_weights_path: str = RadialogLoraWeightsPath.BINARY_QA_WITH_CONFIDENCE_SFT.value,
+):
+    """
+    Use this function to save the merged model to a local directory in full precision.
+    """
+    model = load_pretrained_llava_model_without_vision_support_and_without_lora_adapters(
+        device=shared.torch_devices.cuda.value,
+        precision="16bit",
+    )
+    model = add_pretrained_RaDialog_lora_adapters_to_LlavaLlamaForCausalLM_model(
+        model, radialog_lora_weights_path=radialog_lora_weights_path
+    )
+    model = t.cast(peft.LoraModel, model)
+    model = model.merge_and_unload()
+    path = os.path.join(MODEL_SAVING_DIR, model_save_name)
+    model.save_pretrained(path)
