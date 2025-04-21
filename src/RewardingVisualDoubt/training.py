@@ -15,7 +15,7 @@ import time
 import math
 import peft
 from typing import List
-import typing as t
+import typing
 
 
 IGNORE_INDEX = -100
@@ -130,7 +130,7 @@ def get_llava_image_embedding_index_range_for_multimodal_batch_for_ppo(
         typically (batch_size, 3, 448, 448) for Radialog images given the processing pipeline
     """
     if isinstance(model, trl.PreTrainedModelWrapper):
-        model = t.cast(trl.AutoModelForCausalLMWithValueHead, model)
+        model = typing.cast(trl.AutoModelForCausalLMWithValueHead, model)
     if not isinstance(model, LlavaLlamaForCausalLM):
         if isinstance(model, trl.AutoModelForCausalLMWithValueHead):
             model_ = model.pretrained_model
@@ -141,7 +141,7 @@ def get_llava_image_embedding_index_range_for_multimodal_batch_for_ppo(
         ), "Model must be an instance of LlavaLlamaForCausalLM or a PeftModelForCausalLM"
     else:
         model_ = model
-    model_ = t.cast(LlavaLlamaForCausalLM, model_)
+    model_ = typing.cast(LlavaLlamaForCausalLM, model_)
 
     image_features = model_.encode_images(images).to(model_.device)
     attention_mask = attention_mask.clone().detach().bool()
@@ -321,7 +321,12 @@ def get_llava_image_embedding_index_range_for_multimodal_batch_for_ppo(
 
 class MultimodalPPOTrainer(trl.PPOTrainer):
 
-    def step(self) -> None:
+    def step(
+        self,
+        queries: List[torch.LongTensor],
+        responses: List[torch.LongTensor],
+        scores: List[torch.FloatTensor],
+    ):
         raise NotImplementedError(
             "The step function is not implemented for MultimodalPPOTrainer. Use multimodal_step instead."
         )
@@ -442,6 +447,7 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         t = time.time()
         all_stats = []
         early_stop = False
+        train_stats = {}
         for _ in range(self.config.ppo_epochs):
             print("Start epoch level training")
             if early_stop:
@@ -479,22 +485,50 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
                     with self.accelerator.accumulate(self.model):
                         model_inputs = {k: mini_batch_dict[k] for k in model_inputs_names}
 
-                        logprobs, logits, vpreds, _ = self.batched_forward_pass(
+                        forward_pass_output = self.batched_forward_pass(
                             self.model,
                             mini_batch_dict["queries"],
                             mini_batch_dict["responses"],
                             model_inputs,
                             return_logits=True,
-                        )
+                        )  # N
+                        logprobs: torch.FloatTensor = typing.cast(
+                            torch.FloatTensor, forward_pass_output[0]
+                        )  # N
+                        logits: torch.FloatTensor = typing.cast(
+                            torch.FloatTensor, forward_pass_output[1]
+                        )  # N
+                        vpreds: torch.FloatTensor = typing.cast(
+                            torch.FloatTensor, forward_pass_output[2]
+                        )  # N
+
+                        # Due to llava's input preperation logic, the minibatch logprobs, values and masks are padded to the max length of the batch
+                        # We need to remove the excess padding from the logprobs and logits to fit the actual padding required by the minibatch at hand
+                        mini_batch_excess_padding_len = (
+                            mini_batch_dict["logprobs"].shape[1] - logprobs.shape[1]
+                        )  # N
+                        aligned_mini_batch_dict = {
+                            "logprobs": mini_batch_dict["logprobs"][
+                                :, mini_batch_excess_padding_len:
+                            ],
+                            "values": mini_batch_dict["values"][:, mini_batch_excess_padding_len:],
+                            "masks": mini_batch_dict["masks"][:, mini_batch_excess_padding_len:],
+                            "advantages": mini_batch_dict["advantages"][
+                                :, mini_batch_excess_padding_len:
+                            ],
+                            "returns": mini_batch_dict["returns"][
+                                :, mini_batch_excess_padding_len:
+                            ],
+                        }  # N
                         train_stats = self.train_minibatch(
-                            mini_batch_dict["logprobs"],
-                            mini_batch_dict["values"],
+                            aligned_mini_batch_dict["logprobs"],
+                            aligned_mini_batch_dict["values"],
                             logprobs,
                             logits,
                             vpreds,
-                            mini_batch_dict["masks"],
-                            mini_batch_dict["advantages"],
-                            mini_batch_dict["returns"],
+                            aligned_mini_batch_dict["masks"],
+                            aligned_mini_batch_dict["advantages"],
+                            aligned_mini_batch_dict["returns"],
                         )
                         all_stats.append(train_stats)
 
@@ -560,8 +594,8 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
     def batched_forward_pass(
         self,
         model: PreTrainedModelWrapper,
-        queries: torch.Tensor,
-        responses: torch.Tensor,
+        queries: torch.Tensor | list[torch.Tensor] | list[torch.LongTensor],
+        responses: torch.Tensor | list[torch.Tensor] | list[torch.LongTensor],
         model_inputs: dict,
         return_logits: bool = False,
     ):
@@ -664,12 +698,13 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         """
         Pad the mini-batches to the maximum sequence length in the batch.
         Args:
-            all_logits: list[Tensor] List of logits tensors.
-            all_values: list[Tensor] of values tensors.
-            all_logprobs: list[Tensor] of logprobs tensors.
-            all_masks: list[Tensor] of masks tensors.
+            all_logits: list[Tensor] List of logits tensors each tensor representing a mini-batch.
+            all_values: list[Tensor] of values tensors each tensor representing a mini-batch..
+            all_logprobs: list[Tensor] of logprobs tensors each tensor representing a mini-batch..
+            all_masks: list[Tensor] of masks tensors each tensor representing a mini-batch.
         Returns:
-            Padded logits, values, logprobs, and masks tensors."""
+            List of padded mini-batch logits, values, logprobs, and masks tensors with each mini-batch padded to the maximum sequence length.
+        """
 
         max_seq_len = max(
             t.shape[1] for t in all_values
