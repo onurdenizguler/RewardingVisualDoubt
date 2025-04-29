@@ -53,21 +53,16 @@ def _get_hf_model_path(repo_id) -> Path:
 def _resolve_model_configuration(
     kwargs, device: str, device_map: str, precision: Precision
 ) -> dict:
+    print(f"Model will be loaded at precision: {precision}")
 
     kwargs = {"device_map": device_map, **kwargs}
+    kwargs["torch_dtype"] = torch.bfloat16
 
     if device != "cuda":
         kwargs["device_map"] = {"": device}
-
-    if precision == "16bit":
-        print("Precision: 16bit (non-quantized)")
-        kwargs["torch_dtype"] = torch.bfloat16
-    elif precision == "8bit":
-        print("Precision: 8bit quantized")
+    if precision == "8bit":
         kwargs["load_in_8bit"] = True
-        kwargs["torch_dtype"] = torch.bfloat16
     elif precision == "4bit":
-        print("Precision: 4bit quantized")
         kwargs["load_in_4bit"] = True
         kwargs["quantization_config"] = transformers.BitsAndBytesConfig(
             load_in_4bit=True,
@@ -75,8 +70,6 @@ def _resolve_model_configuration(
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_type="nf4",
         )
-        kwargs["torch_dtype"] = torch.bfloat16
-
     return kwargs
 
 
@@ -153,7 +146,7 @@ def _modify_model_for_image_input(
 
 
 def _load_base_LlavaLamaForCausalLM_model(
-    model_base: str, model_path: Path, skip_vision_projector: bool = False, **kwargs
+    model_base: str, model_path: Path, **kwargs
 ) -> llava.model.LlavaLlamaForCausalLM:
 
     print("Model base: ", model_base)
@@ -178,7 +171,7 @@ def _load_base_LlavaLamaForCausalLM_model(
             torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype)
         )
 
-    if not skip_vision_projector and model.config.mm_vision_tower == "biovil":
+    if model.config.mm_vision_tower == "biovil":
         # reset mm_projector as wrong shape is loaded from pretrained base model
         model.model.mm_projector = build_vision_projector(model.config)
         model.model.mm_projector.to(device=model.device, dtype=model.dtype)
@@ -428,9 +421,7 @@ def load_pretrained_llava_model_without_vision_support_and_without_lora_adapters
     )
 
     kwargs = _resolve_model_configuration(kwargs, device, device_map, precision)
-    model = _load_base_LlavaLamaForCausalLM_model(
-        model_base, model_path, skip_vision_projector=True, **kwargs
-    )
+    model = _load_base_LlavaLamaForCausalLM_model(model_base, model_path, **kwargs)
     model = _load_additional_non_lora_llava_weights(
         model, model_path, skip_vision_related_weights=True
     )

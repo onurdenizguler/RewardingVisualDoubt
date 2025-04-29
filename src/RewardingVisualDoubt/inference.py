@@ -31,7 +31,7 @@ def generate_radialog_answer_for_binary_qa_for_single_study(
         output_ids = model.generate(
             input_ids=input_ids,
             images=image_tensor,
-            do_sample=False,
+            do_sample=True,
             use_cache=True,
             max_new_tokens=300,
             stopping_criteria=[stopping_criteria],
