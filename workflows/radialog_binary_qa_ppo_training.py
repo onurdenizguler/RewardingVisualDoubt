@@ -16,8 +16,9 @@ import torch
 import transformers
 import trl
 from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
+import wandb
 
-from RewardingVisualDoubt import dataset, prompter, response, reward, shared
+from RewardingVisualDoubt import dataset, prompter, response, reward, shared, evaluation
 from RewardingVisualDoubt import training as training
 from RewardingVisualDoubt import vllm
 
@@ -46,6 +47,38 @@ def radialog_binary_qa_ppo_evaluation_step(model, batch):
     pass
 
 
+def _handle_accumulating_game_logs(
+    accumulating_game_logs: training.GameLogs,
+    queries: list[str],
+    responses: list[str],
+    is_answer_correct: list[bool],
+    scores: list[torch.FloatTensor],
+    confidences: list[int | None],
+) -> training.GameLogs:
+
+    accumulating_game_logs["queries"].extend(queries)
+    accumulating_game_logs["responses"].extend(responses)
+    accumulating_game_logs["is_answer_correct"].extend(is_answer_correct)
+    accumulating_game_logs["scores"].extend([score.item() for score in scores])
+    accumulating_game_logs["confidences"].extend(confidences)
+
+    truncated_accumulating_game_logs: training.GameLogs = {
+        "queries": [],
+        "responses": [],
+        "is_answer_correct": [],
+        "scores": [],
+        "confidences": [],
+    }
+    # If more than 500 rows, remove the extra rows
+    if len(accumulating_game_logs["queries"]) > 500:
+        for key in accumulating_game_logs.keys():
+            truncated_accumulating_game_logs[key] = accumulating_game_logs[key][-500:]
+    else:
+        truncated_accumulating_game_logs = accumulating_game_logs
+
+    return truncated_accumulating_game_logs
+
+
 def radialog_binary_qa_ppo_training_step(
     model: trl.AutoModelForCausalLMWithValueHead,
     device: torch.device,
@@ -53,6 +86,8 @@ def radialog_binary_qa_ppo_training_step(
     generation_kwargs_ppo: dict,
     ppo_trainer: training.MultimodalPPOTrainer,
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
+    reward_function: t.Callable,
+    accumulating_game_logs: training.GameLogs | None = None,
 ):
 
     ######### 5.1 Unpack the batch #########
@@ -93,7 +128,10 @@ def radialog_binary_qa_ppo_training_step(
 
     scores = [
         reward.generated_answer_and_confidence_to_reward(
-            generated_answer_label, generated_confidence_value, ground_truth_label
+            generated_answer_label,
+            generated_confidence_value,
+            ground_truth_label,
+            reward_function=reward_function,
         )
         for generated_answer_label, generated_confidence_value, ground_truth_label in zip(
             generated_answer_labels, generated_confidence_values, labels.bool().tolist()
@@ -118,29 +156,59 @@ def radialog_binary_qa_ppo_training_step(
 
     ######### 5.8 Create a report and log the training stats #########
     batch_report = {}
-    # batch_report["complete_conversation_text"] = tokenizer.batch_decode(
-    #     training.replace_image_token_with_another_token_for_list_of_tensors(
-    #         complete_conversation_ids
-    #     ),
-    #     skip_special_tokens=True,
-    # )
-    # batch_report["query"] = tokenizer.batch_decode(
-    #     prompt_and_generated_answers_with_confidence_requests_ids, skip_special_tokens=True
-    # )
-    # batch_report["response"] = generated_confidence_values
-    # # batch_report["generated_answer_labels"] = generated_answer_labels
-    # batch_report["generated_answers_texts"] = generated_answers_texts
-    # batch_report["generated_confidences_texts"] = generated_confidences_texts
-    stats["HELLO"] = 5
-    batch_report["query"] = tokenizer.batch_decode(
-        training.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
-    )
-    batch_report["response"] = generated_texts
-    ppo_trainer.log_stats(
-        stats=stats, batch=batch_report, rewards=scores
-    )  # The game logs will not be logged because the batch does not contain the keys 'query' and 'response'
+    queries_with_gt_labels = [
+        f"(GT Label: {str(labels.bool().tolist()[idx])}) - {input_prompt}"
+        for idx, input_prompt in enumerate(
+            tokenizer.batch_decode(
+                training.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
+            )
+        )
+    ]
+    if accumulating_game_logs:
+        truncated_accumulating_game_logs = _handle_accumulating_game_logs(
+            accumulating_game_logs,
+            queries=queries_with_gt_labels,
+            responses=generated_texts,
+            is_answer_correct=[
+                (gt_label is not None) and (gt_label == predicted_label)
+                for gt_label, predicted_label in zip(
+                    generated_answer_labels, labels.bool().tolist()
+                )
+            ],
+            scores=scores,
+            confidences=generated_confidence_values,
+        )
+        table_rows = [
+            list(r)
+            for r in zip(
+                truncated_accumulating_game_logs["queries"],
+                truncated_accumulating_game_logs["responses"],
+                truncated_accumulating_game_logs["is_answer_correct"],
+                truncated_accumulating_game_logs["confidences"],
+                truncated_accumulating_game_logs["scores"],
+            )
+        ]
+        stats["accumulating_game_logs"] = wandb.Table(
+            columns=["query", "response", "is_answer_correct", "confidence", "reward"],
+            rows=table_rows,
+        )
+        stats["confidence_calibration_last_500_samples"] = wandb.Image(
+            evaluation.plot_calibration_curve(
+                confidences=truncated_accumulating_game_logs["confidences"],
+                is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
+            )
+        )
+        stats["confidence_calibration_all_samples"] = wandb.Image(
+            evaluation.plot_calibration_curve(
+                confidences=accumulating_game_logs["confidences"],
+                is_answer_correct=accumulating_game_logs["is_answer_correct"],
+            )
+        )
 
-    # return rewards, batch_report
+    batch_report["query"] = queries_with_gt_labels
+    batch_report["response"] = generated_texts
+
+    ppo_trainer.log_stats(stats=stats, batch=batch_report, rewards=scores)
 
 
 # %%

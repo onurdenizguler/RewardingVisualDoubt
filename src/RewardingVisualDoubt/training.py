@@ -14,7 +14,7 @@ from trl.core import (
 import time
 import math
 import peft
-from typing import List
+from typing import List, TypedDict
 import typing
 
 
@@ -23,6 +23,14 @@ LLAVA_IMAGE_TOKEN_INDEX = -200  # as defined by the llava repo
 TOKEN_INDEX_OF_THE_WORD_IMAGE = (
     1967  # 1967 is the index of the image token in the tokenizer (the word image)
 )
+
+
+class GameLogs(TypedDict):
+    queries: list[str]
+    responses: list[str]
+    is_answer_correct: list[bool]
+    scores: list[float]
+    confidences: list[int | None]
 
 
 def remove_padding(tensor, pad_token) -> torch.Tensor:
@@ -386,7 +394,6 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         full_kl_penalty = self.config.kl_penalty == "full"
 
         with torch.no_grad():
-            print("First pass for logprobs")
             all_logprobs, logits_or_none, values, masks = self.batched_forward_pass(
                 self.model, queries, responses, model_inputs, return_logits=full_kl_penalty
             )
@@ -413,7 +420,6 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         timing["time/ppo/forward_pass"] = time.time() - t
 
         with torch.no_grad():
-            print("Compute rewards and advantages")
             t = time.time()
             if full_kl_penalty:
                 active_full_logprobs = logprobs_from_logits(logits_or_none, None, gather=False)
@@ -449,25 +455,16 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         early_stop = False
         train_stats = {}
         for _ in range(self.config.ppo_epochs):
-            print("Start epoch level training")
             if early_stop:
                 break
             b_inds = np.random.permutation(bs)
             for backward_batch_start in range(0, bs, self.config.backward_batch_size):
-                print(
-                    "Start backward batch level training for batch size:",
-                    self.config.backward_batch_size,
-                )
                 backward_batch_end = backward_batch_start + self.config.backward_batch_size
                 backward_batch_inds = b_inds[backward_batch_start:backward_batch_end]
 
                 for mini_batch_start in range(
                     0, self.config.backward_batch_size, self.config.mini_batch_size
                 ):
-                    print(
-                        "Start mini batch level training for batch size:",
-                        self.config.mini_batch_size,
-                    )
                     mini_batch_end = mini_batch_start + self.config.mini_batch_size
                     mini_batch_inds = backward_batch_inds[mini_batch_start:mini_batch_end]
                     mini_batch_dict = {
