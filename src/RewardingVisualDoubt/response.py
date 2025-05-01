@@ -3,10 +3,11 @@ import re
 from typing import List, Optional
 
 
-def parse_binary_labels(generated_answers: List[str]) -> List[bool]:
+def parse_binary_labels(generated_answers: List[str]) -> List[bool | None]:
     """
     Parses binary labels from generated answers.
     Returns True for 'yes' and False for 'no'.
+    Returns None for ambiguous cases.
     """
     labels = []
     for answer in generated_answers:
@@ -29,9 +30,12 @@ def parse_confidences(generated_confidences: List[str]) -> List[Optional[int]]:
     for conf in generated_confidences:
         # Clean and search for confidence key-value pair, allowing single quotes and unquoted keys
         clean_conf = conf.replace("\n", "").strip()
-        match = re.search(
-            r'["\']?confidence["\']?\s*:\s*(\d+(?:\.\d+)?)', clean_conf, re.IGNORECASE
-        )
+        pattern = r'["\']?confidence["\']?\s*:\s*(\d+(?:\.\d+)?)'
+        if len(re.findall(pattern, clean_conf, re.IGNORECASE)) > 1:
+            # If there are multiple matches, we cannot determine which one to use
+            confidences.append(None)
+            continue
+        match = re.search(pattern, clean_conf, re.IGNORECASE)
         if match:
             try:
                 value = int(match.group(1))  # Ensure it's an integer
