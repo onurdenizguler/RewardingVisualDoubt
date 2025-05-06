@@ -1,8 +1,8 @@
+import enum
 import os
 import typing as t
 from pathlib import Path
 from re import L
-import enum
 
 import bitsandbytes
 import peft
@@ -12,16 +12,16 @@ import trl
 from huggingface_hub import snapshot_download
 from LLAVA_Biovil import llava
 from LLAVA_Biovil.biovil_t.model import ImageModel
-from LLAVA_Biovil.biovil_t.pretrained import _download_biovil_t_image_model_weights
+from LLAVA_Biovil.biovil_t.pretrained import \
+    _download_biovil_t_image_model_weights
 from LLAVA_Biovil.biovil_t.types import ImageEncoderType
 from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
-from LLAVA_Biovil.llava.constants import (
-    DEFAULT_IM_END_TOKEN,
-    DEFAULT_IM_START_TOKEN,
-    DEFAULT_IMAGE_PATCH_TOKEN,
-)
+from LLAVA_Biovil.llava.constants import (DEFAULT_IM_END_TOKEN,
+                                          DEFAULT_IM_START_TOKEN,
+                                          DEFAULT_IMAGE_PATCH_TOKEN)
 from LLAVA_Biovil.llava.model import LlavaConfig
-from LLAVA_Biovil.llava.model.multimodal_projector.builder import build_vision_projector
+from LLAVA_Biovil.llava.model.multimodal_projector.builder import \
+    build_vision_projector
 from peft import LoraModel, PeftModel
 from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
 from trl import models as trl_models
