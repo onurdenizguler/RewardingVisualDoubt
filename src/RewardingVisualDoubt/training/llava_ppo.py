@@ -1,124 +1,20 @@
-import torch
-import numpy as np
-
-import trl
-from trl.models import PreTrainedModelWrapper
-from trl.core import (
-    PPODecorators,
-    logprobs_from_logits,
-    WANDB_PADDING,
-    stack_dicts,
-    stats_to_np,
-    convert_to_scalar,
-)
-import time
 import math
-import peft
-from typing import List, TypedDict
+import time
 import typing
+from typing import List
 
+import numpy as np
+import peft
+import torch
+import trl
+from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
 
-IGNORE_INDEX = -100
-LLAVA_IMAGE_TOKEN_INDEX = -200  # as defined by the llava repo
-TOKEN_INDEX_OF_THE_WORD_IMAGE = (
-    1967  # 1967 is the index of the image token in the tokenizer (the word image)
-)
-
-
-class GameLogs(TypedDict):
-    queries: list[str]
-    responses: list[str]
-    is_answer_correct: list[bool]
-    scores: list[float]
-    confidences: list[int | None]
-
-
-def remove_padding(tensor, pad_token) -> torch.Tensor:
-    # TODO: better alternative is output = generation[(1 - mask).sum() :]  # remove padding
-    start_idx = 0
-    # while start_idx < len(tensor) and tensor[start_idx] == pad_token:
-    #     start_idx += 1
-
-    # Find the end index where padding starts again
-    end_idx = len(tensor) - 1
-    while end_idx >= 0 and tensor[end_idx] == pad_token:
-        end_idx -= 1
-
-    # Slice the tensor to remove padding, add 1 to end_idx to include the last non-pad token
-    trimmed_tensor = tensor[start_idx : end_idx + 1]
-    return trimmed_tensor
-
-
-def remove_preciding_padding_from_batch_tensor(batch: torch.Tensor):
-    trimmed_sequences = []
-    for seq in batch:
-        # Find the first occurrence of token `1`
-        ones = (seq == 1).nonzero(as_tuple=True)[0]
-        if len(ones) > 0:
-            first_one_idx = ones[0].item()
-            trimmed_seq = seq[first_one_idx:]
-            trimmed_sequences.append(trimmed_seq)
-        else:
-            raise Exception("Error at remove_preciding_padding_from_batch_tensor")
-
-    # If you want to pad back to the same length (optional):
-    return trimmed_sequences
-
-
-def remove_trailing_padding_from_prediction(
-    prediction: torch.Tensor, pad_token_id: int | None
-) -> list[torch.Tensor]:
-    """
-    Remove padding tokens from the end of the tensor
-    args:
-        tensor: torch.Tensor: a batch of generations by an LM with each generation having trailing padding tokens at the end
-        pad_token: int
-    """
-    assert pad_token_id is not None, "pad_token_id must be provided"
-    return [remove_padding(p, pad_token_id) for p in prediction]
-
-
-def replace_image_token_with_another_token(
-    prediction: torch.Tensor,
-    image_token_id: int = LLAVA_IMAGE_TOKEN_INDEX,
-    replacement_token_id: int = TOKEN_INDEX_OF_THE_WORD_IMAGE,
-) -> torch.Tensor:
-    # TODO: Consider adding the special image token to tokenizer for future editions
-    prediction[prediction == image_token_id] = replacement_token_id
-    return prediction
-
-
-def replace_image_token_with_another_token_for_list_of_tensors(
-    predictions: list[torch.Tensor],
-    image_token_id: int = LLAVA_IMAGE_TOKEN_INDEX,
-    replacement_token_id: int = TOKEN_INDEX_OF_THE_WORD_IMAGE,
-) -> list[torch.Tensor]:
-    return [
-        replace_image_token_with_another_token(p, image_token_id, replacement_token_id)
-        for p in predictions
-    ]
-
-
-def get_likeliest_token_from_logits(
-    logits: torch.Tensor,
-):
-    """
-    Get the most likely token from the logits
-    Args:
-        logits: torch.Tensor of shape (batch_size, sequence_length, vocab_size)
-    Returns:
-        torch.Tensor of shape (batch_size, sequence_length)
-    """
-    # Get the most likely token from the logits
-    return torch.argmax(logits, dim=-1)
-
+from RewardingVisualDoubt import shared
 
 #############################################################################################
 # Custom logic to get the indexes of the embeddings representing the input images in a batch
 # built upon llava-biovil codebase's prepare_inputs_labels_for_multimodal() in LlavaMetaModel
 #############################################################################################
-
-from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
 
 
 def get_llava_image_embedding_index_range_for_multimodal_batch_for_ppo(
@@ -175,10 +71,10 @@ def get_llava_image_embedding_index_range_for_multimodal_batch_for_ppo(
     for batch_idx, cur_input_ids in enumerate(input_ids):
 
         # 2.1 Determine num_images and the indices where image tokens occur
-        num_images = (cur_input_ids == LLAVA_IMAGE_TOKEN_INDEX).sum()
+        num_images = (cur_input_ids == shared.LLAVA_IMAGE_TOKEN_INDEX).sum()
         image_token_indices = (
             [-1]
-            + torch.where(cur_input_ids == LLAVA_IMAGE_TOKEN_INDEX)[0].tolist()
+            + torch.where(cur_input_ids == shared.LLAVA_IMAGE_TOKEN_INDEX)[0].tolist()
             + [cur_input_ids.shape[0]]
         )
 
@@ -339,7 +235,7 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
             "The step function is not implemented for MultimodalPPOTrainer. Use multimodal_step instead."
         )
 
-    @PPODecorators.empty_cuda_cache()
+    @trl.core.PPODecorators.empty_cuda_cache()
     def multimodal_step(
         self,
         queries: List[torch.LongTensor],
@@ -422,8 +318,12 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         with torch.no_grad():
             t = time.time()
             if full_kl_penalty:
-                active_full_logprobs = logprobs_from_logits(logits_or_none, None, gather=False)
-                ref_full_logprobs = logprobs_from_logits(ref_logits_or_none, None, gather=False)
+                active_full_logprobs = trl.core.logprobs_from_logits(
+                    logits_or_none, None, gather=False
+                )
+                ref_full_logprobs = trl.core.logprobs_from_logits(
+                    ref_logits_or_none, None, gather=False
+                )
 
                 rewards, non_score_reward = self.compute_rewards(
                     scores, active_full_logprobs, ref_full_logprobs, masks
@@ -539,14 +439,14 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         timing["time/ppo/optimize_step"] = time.time() - t
 
         t = time.time()
-        train_stats = stack_dicts(all_stats)
+        train_stats = trl.core.stack_dicts(all_stats)
 
         # reshape advantages/ratios such that they are not averaged.
         train_stats["policy/advantages"] = torch.flatten(
             train_stats["policy/advantages"]
         ).unsqueeze(0)
         train_stats["policy/advantages"] = torch.nan_to_num(
-            train_stats["policy/advantages"], WANDB_PADDING
+            train_stats["policy/advantages"], trl.core.WANDB_PADDING
         )
         train_stats["policy/ratio"] = torch.flatten(train_stats["policy/ratio"]).unsqueeze(0)
 
@@ -564,7 +464,7 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         # Gather/Reduce stats from all processes
         if self.is_distributed:
             stats = self.gather_stats(stats)
-        stats = stats_to_np(stats)
+        stats = trl.core.stats_to_np(stats)
         timing["time/ppo/calc_stats"] = time.time() - t
         stats["ppo/learning_rate"] = self.optimizer.param_groups[0]["lr"]
 
@@ -580,17 +480,17 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
 
         # post-process stats for tensorboard and other loggers
         if self.config.log_with != "wandb":
-            stats = convert_to_scalar(stats)
+            stats = trl.core.convert_to_scalar(stats)
 
         if self.lr_scheduler is not None:
             self.lr_scheduler.step()
 
         return stats
 
-    @PPODecorators.empty_cuda_cache()
+    @trl.core.PPODecorators.empty_cuda_cache()
     def batched_forward_pass(
         self,
-        model: PreTrainedModelWrapper,
+        model: trl.PreTrainedModelWrapper,
         queries: torch.Tensor | list[torch.Tensor] | list[torch.LongTensor],
         responses: torch.Tensor | list[torch.Tensor] | list[torch.LongTensor],
         model_inputs: dict,
@@ -646,7 +546,7 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
                 )
             )  # N
 
-            logprobs = logprobs_from_logits(logits[:, :-1, :], input_ids[:, 1:])
+            logprobs = trl.core.logprobs_from_logits(logits[:, :-1, :], input_ids[:, 1:])
             masks = torch.zeros_like(attention_mask)
             masks[:, :-1] = attention_mask[:, 1:]
 
