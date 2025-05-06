@@ -1,7 +1,7 @@
 import enum
 import os
-import typing as t
 import pathlib as path
+import typing as t
 from pathlib import Path
 
 import huggingface_hub
@@ -13,7 +13,7 @@ from LLAVA_Biovil import llava
 
 from RewardingVisualDoubt import shared
 
-from . import adapters, vision, tokenizer
+from . import adapters, tokenizer, vision
 
 LLAVA_BASE_MODEL_NAME = "liuhaotian/llava-v1.5-7b"
 LLAVA_LORA_ADAPTER = "llava-v1.5-7b-task-lora_radialog_instruct_llava_biovil_unfrozen_2e-5_5epochs_v5_checkpoint-21000"
@@ -32,6 +32,10 @@ class RadialogLoraWeightsPath(enum.Enum):
 
 class RadialogMergedLlavaModelPath(enum.Enum):
     BINARY_QA_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_with_confidence_sft_full_merged_model"
+
+
+class BinaryQAPPOAdapterPath(enum.Enum):
+    BINARY_QA_CONFIDENCE_PPO_001_05_05_2025 = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_ppo_adapter_1_05-05-2025/adapter_model.bin"
 
 
 Precision = t.Literal["16bit", "8bit", "4bit"]
@@ -247,6 +251,7 @@ def load_pretrained_llava_model_for_ppo_training_with_fresh_lora_adapters(
     llava_model_path: str = RadialogMergedLlavaModelPath.BINARY_QA_WITH_CONFIDENCE_SFT.value,
     device_str: str = shared.torch_devices.cuda.value,
     precision: Precision = "16bit",
+    adapter_path: str | None = None,
 ) -> trl.models.modeling_value_head.AutoModelForCausalLMWithValueHead:
     print(
         f"Adding fresh set of LoRA adapters and a fresh value head to the model for PPO training using Llava model loaded from: {llava_model_path}"
@@ -257,7 +262,7 @@ def load_pretrained_llava_model_for_ppo_training_with_fresh_lora_adapters(
         precision=precision,
     )
     model = adapters.add_finetuned_or_fresh_lora_adapters_and_fresh_value_head_to_LlavaLlamaForCausalLM_model(
-        model, radialog_lora_weights_path=None
+        model, radialog_lora_weights_path=adapter_path
     )
     return model
 

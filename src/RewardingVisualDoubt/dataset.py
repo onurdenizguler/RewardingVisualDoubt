@@ -7,12 +7,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+import transformers
 from LLAVA_Biovil.llava.constants import IMAGE_TOKEN_INDEX
 from LLAVA_Biovil.llava.mm_utils import tokenizer_image_token
 from PIL import Image
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
-from transformers import PreTrainedTokenizer
 from utils import create_chest_xray_transform_for_inference, remap_to_uint8
 
 from RewardingVisualDoubt import mimic_cxr, shared
@@ -148,7 +148,7 @@ def _create_prompt_for_binary_qa(
 
 def _create_llava_model_input_from_mimic_cxr_datapoint(
     datapoint: mimic_cxr.MimicCxrDatapoint | mimic_cxr.MimicCxrBinaryQADatapoint,
-    tokenizer: PreTrainedTokenizer,
+    tokenizer: transformers.PreTrainedTokenizer,
     prompter: T.Callable[[str], str],
     image_transform: T.Callable[[Image.Image], torch.Tensor] | None = biovil_image_transformer,
 ) -> LlavaModelInput:
@@ -226,7 +226,7 @@ def _replace_confidence_score_tokens_with_value(
 
             # Replace tokens from index 2 to (colon_idx - 1), ensuring valid range
             if colon_idx > 2:
-                reversed_ids[2 : colon_idx - 1] = -100
+                reversed_ids[2 : colon_idx - 1] = -100  # IGNORE_INDEX VALUE
 
         # Reverse back to original order
         output_ids = reversed_ids.flip(0)
@@ -246,7 +246,7 @@ class PromptedMimicCxrLlavaModelInputDataset(TorchDataset):
     """
 
     mimic_cxr_df: pd.DataFrame
-    tokenizer: PreTrainedTokenizer
+    tokenizer: transformers.PreTrainedTokenizer
     prompter: T.Callable[[str], str]
     image_transform: T.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer
     split: DatasetSplit = DatasetSplit.TRAIN
@@ -286,7 +286,7 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
     """
 
     balanced_binary_qa_mimic_cxr_df: pd.DataFrame
-    tokenizer: PreTrainedTokenizer
+    tokenizer: transformers.PreTrainedTokenizer
     prompter: T.Callable[[str], str]
     image_transform: T.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer
     split: DatasetSplit = DatasetSplit.TRAIN
@@ -345,7 +345,7 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT(
 
 
 def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
-    split: DatasetSplit, tokenizer: PreTrainedTokenizer, prompter: T.Callable[..., str]
+    split: DatasetSplit, tokenizer: transformers.PreTrainedTokenizer, prompter: T.Callable[..., str]
 ) -> BinaryQAPromptedMimicCxrLlavaModelInputDataset:
     return BinaryQAPromptedMimicCxrLlavaModelInputDataset(
         balanced_binary_qa_mimic_cxr_df=mimic_cxr.create_balanced_binary_qa_mimic_cxr_dataset_df(
@@ -359,7 +359,7 @@ def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
 
 
 def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset_for_sft(
-    split: DatasetSplit, tokenizer: PreTrainedTokenizer, prompter: T.Callable[..., str]
+    split: DatasetSplit, tokenizer: transformers.PreTrainedTokenizer, prompter: T.Callable[..., str]
 ) -> BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT:
     return BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT(
         balanced_binary_qa_mimic_cxr_df=mimic_cxr.create_balanced_binary_qa_mimic_cxr_dataset_df(
@@ -377,7 +377,7 @@ def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset_for_sft(
 
 def prompted_mimic_cxr_llava_model_input_collate_fn(
     batch: list[PromptedMimicCxrLlavaModelInputDatapointDict],
-    padding_tokenizer: PreTrainedTokenizer,
+    padding_tokenizer: transformers.PreTrainedTokenizer,
 ) -> MimicCxrLlavaModelInputBatchDict:
     """
     Custom collate function to pad text sequences and stack images.
@@ -427,7 +427,7 @@ def prompted_mimic_cxr_llava_model_input_collate_fn(
 
 def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft(
     batch: list[BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT],
-    padding_tokenizer: PreTrainedTokenizer,
+    padding_tokenizer: transformers.PreTrainedTokenizer,
 ) -> MimicCxrLlavaModelInputBatchDictForSFT:
 
     llava_model_inputs, labels, prompts, mimic_cxr_datapoint_metadatas, expected_output_ids = zip(
@@ -491,7 +491,7 @@ def get_mimic_cxr_llava_model_input_dataloader(
         PromptedMimicCxrLlavaModelInputDataset | BinaryQAPromptedMimicCxrLlavaModelInputDataset
     ),
     batch_size: int,
-    padding_tokenizer: PreTrainedTokenizer,
+    padding_tokenizer: transformers.PreTrainedTokenizer,
     num_workers: T.Optional[int] = None,
 ) -> DataLoader:
     return DataLoader(
@@ -509,7 +509,7 @@ def get_mimic_cxr_llava_model_input_dataloader(
 def get_mimic_cxr_llava_model_input_dataloader_for_sft(
     dataset: BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT,
     batch_size: int,
-    padding_tokenizer: PreTrainedTokenizer,
+    padding_tokenizer: transformers.PreTrainedTokenizer,
     num_workers: T.Optional[int] = None,
 ) -> DataLoader:
 
@@ -531,7 +531,7 @@ def get_mimic_cxr_llava_model_input_dataloader_for_sft(
 
 # def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft_simplified(
 #     batch: list[BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT],
-#     padding_tokenizer: PreTrainedTokenizer,
+#     padding_tokenizer: transformers.PreTrainedTokenizer,
 # ) -> dict:
 
 #     llava_model_inputs, expected_output_ids = zip(

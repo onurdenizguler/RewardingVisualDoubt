@@ -1,12 +1,13 @@
 import typing as t
 
 import torch
-
 from LLAVA_Biovil import llava
-from LLAVA_Biovil.llava.model.multimodal_projector.builder import build_vision_projector
 from LLAVA_Biovil.biovil_t.model import ImageModel
-from LLAVA_Biovil.biovil_t.pretrained import _download_biovil_t_image_model_weights
+from LLAVA_Biovil.biovil_t.pretrained import \
+    _download_biovil_t_image_model_weights
 from LLAVA_Biovil.biovil_t.types import ImageEncoderType
+from LLAVA_Biovil.llava.model.multimodal_projector.builder import \
+    build_vision_projector
 
 
 def reset_mm_projector_to_fix_wrong_shape(

@@ -1,9 +1,10 @@
+import typing as t
+
 import torch
 import transformers
 from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
-from RewardingVisualDoubt import dataset, shared
 
-import typing as t
+from RewardingVisualDoubt import dataset, shared
 
 
 def generate_radialog_report_for_single_study(

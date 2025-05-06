@@ -3,8 +3,8 @@ from RewardingVisualDoubt import infrastructure
 
 infrastructure.make_ipython_reactive_to_changing_codebase()
 
-import typing as t
 import functools
+import typing as t
 
 import torch
 from datasets import IterableDataset
@@ -12,7 +12,8 @@ from LLAVA_Biovil.llava.conversation import SeparatorStyle, conv_vicuna_v1
 from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
 from torch.utils.data import DataLoader
 
-from RewardingVisualDoubt import dataset, inference, mimic_cxr, prompter, shared, vllm
+from RewardingVisualDoubt import (dataset, inference, mimic_cxr, prompter,
+                                  shared, vllm)
 
 STOP_STR = (
     conv_vicuna_v1.copy().sep

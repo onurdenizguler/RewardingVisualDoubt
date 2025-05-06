@@ -179,3 +179,5 @@ models/
 **/wandb/* 
 
 **/training_checkpoints/**
+
+tests/

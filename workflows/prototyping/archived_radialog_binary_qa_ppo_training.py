@@ -5,10 +5,10 @@ infrastructure.make_ipython_reactive_to_changing_codebase()
 infrastructure.supress_known_warnings()
 
 import dataclasses
+import functools
 import os
 import pathlib as path
 import typing as t
-import functools
 
 import accelerate
 import numpy as np
