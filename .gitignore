@@ -171,3 +171,13 @@ cython_debug/
 .pypirc
 
 .*
+
+data/
+models/
+
+**/wandb/**/
+**/wandb/* 
+
+**/training_checkpoints/**
+
+tests/
