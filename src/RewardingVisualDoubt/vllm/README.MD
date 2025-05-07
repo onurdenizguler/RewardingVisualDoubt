@@ -1,4 +1,4 @@
-The vllm module provides a unified interface to load and extend the LLaVA Vision-Language Model with support for LoRA adapters and PPO-style reinforcement learning using a value head. It is designed for fine-tuning vision-language models with reward modeling and visual confidence alignment. Within scope of the project, we assume [RaDialog](https://huggingface.co/ChantalPellegrini/RaDialog-interactive-radiology-report-generatio) weights to be given. 
+The vllm module provides a unified interface to load and extend the LLaVA Vision-Language Model with support for LoRA adapters and PPO-style reinforcement learning using a value head. It is designed for fine-tuning vision-language models with reward modeling and visual confidence alignment. Within scope of the project, we assume [RaDialog](https://huggingface.co/ChantalPellegrini/RaDialog-interactive-radiology-report-generation) weights to be given. 
 
 # 🚀 Features
 
