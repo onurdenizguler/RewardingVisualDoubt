@@ -2,7 +2,6 @@ from typing import TypedDict
 
 import numpy as np
 import re
-import torch
 
 
 from RewardingVisualDoubt import shared

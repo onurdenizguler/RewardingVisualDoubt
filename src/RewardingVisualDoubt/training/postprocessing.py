@@ -1,3 +1,5 @@
+from typing import TypedDict
+import transformers
 import torch
 
 from RewardingVisualDoubt import shared
@@ -5,6 +7,11 @@ from RewardingVisualDoubt import shared
 TOKEN_INDEX_OF_THE_WORD_IMAGE = (
     1967  # 1967 is the index of the image token in the tokenizer (the word image)
 )
+
+
+class ReformulatedQueryAndResponseDict(TypedDict):
+    query_ids: torch.Tensor
+    response_ids: torch.Tensor
 
 
 def remove_padding(tensor, pad_token) -> torch.Tensor:
@@ -85,3 +92,45 @@ def get_likeliest_token_from_logits(
     """
     # Get the most likely token from the logits
     return torch.argmax(logits, dim=-1)
+
+
+def reformulate_query_and_response_for_binary_qa(
+    query_ids: torch.Tensor, response: str, tokenizer: transformers.PreTrainedTokenizer
+) -> ReformulatedQueryAndResponseDict:
+    """
+    Merge the verbal part of a Binary Q&A questions's response with the Binary Q&A question while
+    leaving out the confidence part as the response to perform PPO on.
+    We assume that whenever the response has the left curly bracket, it has the confidence part.
+    Therefore we split the response by the left curly bracket and take the first part as the verbal part.
+        Args:
+            query: str: the question (Typically "<some-instructions> Does the image display disease?")
+            response: str: the generated response (Typically 'Yes, the image displays disease. {"confidence": 4}')
+    """
+    if not "{" in response:
+        return ReformulatedQueryAndResponseDict(
+            query_ids=query_ids,
+            response_ids=torch.tensor(
+                tokenizer.encode(response, add_special_tokens=False),
+                dtype=torch.long,
+                device=query_ids.device,
+            ),
+        )
+
+    verbal_part = response.split("{")[0]
+    verbal_part_ids = tokenizer.encode(verbal_part, add_special_tokens=False)
+    verbal_part_ids = torch.tensor(verbal_part_ids, dtype=torch.long, device=query_ids.device)
+    query_ids_updated = torch.cat(
+        (query_ids, verbal_part_ids),
+        dim=0,
+    )
+    confidence_only_response = "{" + response.split("{")[1].strip()
+    confidence_only_response_ids = torch.tensor(
+        tokenizer.encode(confidence_only_response, add_special_tokens=False),
+        dtype=torch.long,
+        device=query_ids.device,
+    )
+
+    return ReformulatedQueryAndResponseDict(
+        query_ids=query_ids_updated,
+        response_ids=confidence_only_response_ids,
+    )

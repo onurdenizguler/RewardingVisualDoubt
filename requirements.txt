@@ -9,6 +9,7 @@ chardet==5.2.0
 scikit-learn==1.2.2
 sentencepiece==0.1.99 # RaDialog prefers 0.1.99 but usloth 2024.8 requires >0.2.0
 numpy==1.26.4
+openpyxl==-3.1.5
 trl==0.5.0 # Should be ok to use ( 0.11.0 is the one that introduces a lot more changes, and paul probably uses 0.8.0)
 ipykernel==6.29.5
 ipywidgets==8.1.5

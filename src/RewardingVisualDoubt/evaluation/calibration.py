@@ -14,7 +14,7 @@ def plot_calibration_curve(confidences: list[None | int], is_answer_correct: lis
     """
     filtered = [(c, a) for c, a in zip(confidences, is_answer_correct) if c is not None]
     if not filtered:
-        raise ValueError("No valid confidence values found.")
+        return None
 
     confidences_clean, accuracies_clean = zip(*filtered)
 
