@@ -10,6 +10,7 @@ from RewardingVisualDoubt import shared
 class GameLogs(TypedDict):
     queries: list[str]
     responses: list[str]
+    ppo_target_responses: list[str]
     is_answer_correct: list[bool]
     scores: list[float]
     confidences: list[int | None]

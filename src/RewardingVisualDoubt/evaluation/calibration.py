@@ -36,7 +36,9 @@ def plot_calibration_curve(confidences: list[None | int], is_answer_correct: lis
     ax.set_ylim(0.0, 1.05)
     ax.set_xlabel("Confidence Level (0–10)")
     ax.set_ylabel("Empirical Accuracy")
-    ax.set_title("Confidence Calibration Plot")
+    ax.set_title(
+        f"Confidence Calibration Plot (Overall Accuracy: {sum(is_answer_correct)/len(is_answer_correct)})"
+    )
     ax.grid(True)
     ax.legend()
 
