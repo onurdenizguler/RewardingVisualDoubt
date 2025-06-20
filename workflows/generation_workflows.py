@@ -4,22 +4,24 @@ from RewardingVisualDoubt import infrastructure
 infrastructure.make_ipython_reactive_to_changing_codebase()
 
 import functools
-import typing as t
-
+from pathlib import Path
 import torch
-from datasets import IterableDataset
-from LLAVA_Biovil.llava.conversation import SeparatorStyle, conv_vicuna_v1
-from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
-from torch.utils.data import DataLoader
 
-from RewardingVisualDoubt import (dataset, inference, mimic_cxr, prompter,
-                                  shared, vllm)
+from LLAVA_Biovil.llava.conversation import SeparatorStyle, conv_vicuna_v1
+
+from RewardingVisualDoubt import dataset, inference, prompter, shared, vllm
 
 STOP_STR = (
     conv_vicuna_v1.copy().sep
     if conv_vicuna_v1.copy().sep_style != SeparatorStyle.TWO
     else conv_vicuna_v1.copy().sep2
 )
+
+device_str = (
+    shared.torch_devices.cuda.value if torch.cuda.is_available() else shared.torch_devices.cpu.value
+)
+device = torch.device(device_str)
+
 
 # %%
 ########### 1. TEST RIGINAL RADIALOG MODEL'S REPORT GENERATION BEHAVIOUR ###########
@@ -49,7 +51,11 @@ tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
 )
 
 # %% load the model
-model = vllm.load_pretrained_llava_model(skip_lora_adapters=False)
+model = vllm.load_baseline_llava_model_with_vision_modules(
+    device=device_str,
+    precision="4bit",
+)
+
 padding_tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
     model_base=vllm.LLAVA_BASE_MODEL_NAME
 )
@@ -63,16 +69,16 @@ dataloader_test = dataset.get_mimic_cxr_llava_model_input_dataloader(
     dataset=dataset_test, batch_size=1, padding_tokenizer=padding_tokenizer, num_workers=8
 )
 
-inference.generate_from_dataloader(STOP_STR, tokenizer, model, dataloader_test)
+inference.generate_from_dataloader_for_batch(STOP_STR, tokenizer, model, dataloader_test)
 
 
 ########### 3. TEST SFT-TRAINED MODEL FOR BINARY QA TASK WITH CONFIDENCE REQUEST ###########
 # %%
 SFT_LORA_WEIGHTS_PATH = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/training_checkpoints/best_model_epoch0_step179.pth/adapter_model.bin"
-model = vllm.load_pretrained_llava_model_for_sft_training(
-    device_str=shared.torch_devices.cuda.value,
+model = vllm.load_baseline_llava_model_with_vision_modules(
+    model_path=Path(vllm.RadialogMergedLlavaModelPath.BINARY_QA_WITH_CONFIDENCE_SFT.value),
+    device=device_str,
     precision="4bit",
-    radialog_lora_weights_path=SFT_LORA_WEIGHTS_PATH,
 )
 tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
     model_base=vllm.LLAVA_BASE_MODEL_NAME
@@ -96,6 +102,6 @@ dataloader_test = dataset.get_mimic_cxr_llava_model_input_dataloader(
 )
 
 print("Starting inference...")
-inference.generate_from_dataloader(
+inference.generate_from_dataloader_for_batch(
     STOP_STR, tokenizer, model, dataloader_test, num_batches_to_test=50
 )

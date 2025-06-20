@@ -42,12 +42,13 @@ def generate_radialog_answer_for_binary_qa_for_single_study(
     return pred
 
 
-def generate_from_dataloader(
+def generate_from_dataloader_for_batch(
     STOP_STR: str,
     tokenizer: transformers.PreTrainedTokenizer,
     model,
     dataloader_test,
     num_batches_to_test: int = 10,
+    **generation_kwargs,
 ):
     for idx, batch in enumerate(dataloader_test):
         batch = t.cast(dataset.MimicCxrLlavaModelInputBatchDict, batch)
@@ -60,12 +61,24 @@ def generate_from_dataloader(
             batch_llava_model_input_dict["images"],
         )
         stopping_criteria = KeywordsStoppingCriteria([STOP_STR], tokenizer, input_ids)
-        pred = generate_radialog_answer_for_binary_qa_for_single_study(
-            model, tokenizer, input_ids, images, stopping_criteria
+        output_ids = model.generate(
+            input_ids=input_ids,
+            images=images,
+            do_sample=True,
+            use_cache=True,
+            max_new_tokens=300,
+            stopping_criteria=[stopping_criteria],
+            pad_token_id=tokenizer.pad_token_id,
+            **generation_kwargs,
         )
-        print(f"\n Metadata: {batch['batch_mimic_cxr_datapoint_metadata']}")
-        print(f"Prompt: {batch['batch_prompts']}")
-        print(f"Label:", batch["batch_labels"])
-        print(f"File_idx {idx}, ASSISTANT: ", pred)
+        generated_texts = tokenizer.batch_decode(
+            output_ids[:, input_ids.shape[1] :], skip_special_tokens=True
+        )
+        for idx, text in enumerate(generated_texts):
+            pred = text.strip().replace("</s>", "")
+            print(f"\n Metadata: {batch['batch_mimic_cxr_datapoint_metadata'][idx]}")
+            print(f"Prompt: {batch['batch_prompts'][idx]}")
+            print(f"Label:", batch["batch_labels"][idx])
+            print(f"File_idx {idx}, ASSISTANT: ", pred)
         if idx == num_batches_to_test:
             break
