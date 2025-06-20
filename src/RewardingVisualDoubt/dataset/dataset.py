@@ -15,7 +15,9 @@ from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 from utils import create_chest_xray_transform_for_inference, remap_to_uint8
 
-from RewardingVisualDoubt import mimic_cxr, shared
+from RewardingVisualDoubt import shared
+
+from . import mimic_cxr, domain, sampling
 
 biovil_image_transformer = create_chest_xray_transform_for_inference(512, center_crop_size=448)
 bfloat16_dtype: torch.dtype = torch.bfloat16
@@ -23,11 +25,11 @@ bfloat16_dtype: torch.dtype = torch.bfloat16
 
 # TODO ?Should i always cast images to dtype=torch.bfloat16!!!! (The logic currently is quite convoluted and images get cast only while being moved to device)
 
-
-class DatasetSplit(enum.Enum):
-    TRAIN = "train"
-    VALIDATION = "validate"
-    TEST = "test"
+BinaryQANumSamplesPerDisease = {
+    domain.DatasetSplit.TRAIN: 3000,
+    domain.DatasetSplit.VALIDATION: 50,
+    domain.DatasetSplit.TEST: 50,
+}
 
 
 ######################## MODEL INPUTS AND BATCHES ########################
@@ -249,7 +251,7 @@ class PromptedMimicCxrLlavaModelInputDataset(TorchDataset):
     tokenizer: transformers.PreTrainedTokenizer
     prompter: T.Callable[[str], str]
     image_transform: T.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer
-    split: DatasetSplit = DatasetSplit.TRAIN
+    split: domain.DatasetSplit = domain.DatasetSplit.TRAIN
     supports_label: bool = False
 
     def __post_init__(self):
@@ -289,7 +291,7 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
     tokenizer: transformers.PreTrainedTokenizer
     prompter: T.Callable[[str], str]
     image_transform: T.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer
-    split: DatasetSplit = DatasetSplit.TRAIN
+    split: domain.DatasetSplit = domain.DatasetSplit.TRAIN
     supports_label: bool = False
 
     def __post_init__(self):
@@ -345,11 +347,15 @@ class BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT(
 
 
 def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
-    split: DatasetSplit, tokenizer: transformers.PreTrainedTokenizer, prompter: T.Callable[..., str]
+    split: domain.DatasetSplit,
+    tokenizer: transformers.PreTrainedTokenizer,
+    prompter: T.Callable[..., str],
 ) -> BinaryQAPromptedMimicCxrLlavaModelInputDataset:
     return BinaryQAPromptedMimicCxrLlavaModelInputDataset(
-        balanced_binary_qa_mimic_cxr_df=mimic_cxr.create_balanced_binary_qa_mimic_cxr_dataset_df(
-            mimic_cxr.create_mimic_cxr_dataset_df()
+        balanced_binary_qa_mimic_cxr_df=sampling.create_balanced_binary_qa_mimic_cxr_dataset_df(
+            mimic_cxr.create_mimic_cxr_dataset_df(),
+            split=split,
+            num_samples_per_disease=BinaryQANumSamplesPerDisease[split],
         ),
         tokenizer=tokenizer,
         prompter=prompter,
@@ -359,11 +365,15 @@ def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset(
 
 
 def get_binary_qa_prompted_mimic_cxr_llava_model_input_dataset_for_sft(
-    split: DatasetSplit, tokenizer: transformers.PreTrainedTokenizer, prompter: T.Callable[..., str]
+    split: domain.DatasetSplit,
+    tokenizer: transformers.PreTrainedTokenizer,
+    prompter: T.Callable[..., str],
 ) -> BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT:
     return BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT(
-        balanced_binary_qa_mimic_cxr_df=mimic_cxr.create_balanced_binary_qa_mimic_cxr_dataset_df(
-            mimic_cxr.create_mimic_cxr_dataset_df()
+        balanced_binary_qa_mimic_cxr_df=sampling.create_balanced_binary_qa_mimic_cxr_dataset_df(
+            mimic_cxr.create_mimic_cxr_dataset_df(),
+            split=split,
+            num_samples_per_disease=BinaryQANumSamplesPerDisease[split],
         ),
         tokenizer=tokenizer,
         prompter=prompter,
@@ -394,10 +404,13 @@ def prompted_mimic_cxr_llava_model_input_collate_fn(
         ]
     )
 
-    text_inputs = [
-        torch.as_tensor(sample["text_prompt_input_ids"]).clone().detach()
-        for sample in llava_model_inputs
-    ]
+    text_inputs = T.cast(
+        list[transformers.tokenization_utils_base.EncodedInput],
+        [
+            torch.as_tensor(sample["text_prompt_input_ids"]).clone().detach()
+            for sample in llava_model_inputs
+        ],
+    )
     images = torch.stack([torch.as_tensor(sample["images"]) for sample in llava_model_inputs])
 
     padded_text_inputs_dict = padding_tokenizer.pad(
@@ -406,7 +419,7 @@ def prompted_mimic_cxr_llava_model_input_collate_fn(
         max_length=None,
         return_tensors="pt",
     )
-    text_inputs = padded_text_inputs_dict["input_ids"]
+    text_inputs = T.cast(torch.Tensor, padded_text_inputs_dict["input_ids"])
     attention_mask = padded_text_inputs_dict["attention_mask"]
 
     batch_llava_model_inputs = LlavaModelInputDict(text_prompt_input_ids=text_inputs, images=images)
@@ -525,54 +538,3 @@ def get_mimic_cxr_llava_model_input_dataloader_for_sft(
         drop_last=True,
         persistent_workers=True,
     )
-
-
-# Deprecated
-
-# def prompted_mimic_cxr_llava_model_input_collate_fn_for_sft_simplified(
-#     batch: list[BinaryQAPromptedMimicCxrLlavaModelInputDatapointDictForSFT],
-#     padding_tokenizer: transformers.PreTrainedTokenizer,
-# ) -> dict:
-
-#     llava_model_inputs, expected_output_ids = zip(
-#         *[
-#             (
-#                 item["llava_model_input_dict"],
-#                 item["expected_output_ids"],
-#             )
-#             for item in batch
-#         ]
-#     )
-
-#     text_inputs = [
-#         torch.as_tensor(sample["text_prompt_input_ids"]).clone().detach()
-#         for sample in llava_model_inputs
-#     ]
-#     images = torch.stack([torch.as_tensor(sample["images"]) for sample in llava_model_inputs]).to(
-#         dtype=torch.bfloat16
-#     )
-#     # images dtype casting happens here but this logic should happen elsewhere to prevent bugs
-
-#     padded_text_inputs_dict = padding_tokenizer.pad(
-#         encoded_inputs={"input_ids": text_inputs},
-#         padding=True,
-#         max_length=None,
-#         return_tensors="pt",
-#     )
-#     text_inputs = padded_text_inputs_dict["input_ids"]
-#     attention_mask = padded_text_inputs_dict["attention_mask"]
-
-#     padded_expected_ouput_ids = padding_tokenizer.pad(
-#         encoded_inputs={"input_ids": expected_output_ids},
-#         padding=True,
-#         max_length=None,
-#         return_tensors="pt",
-#     )
-#     padded_expected_ouput_ids = padded_expected_ouput_ids["input_ids"]
-
-#     return {
-#         "input_ids": text_inputs,
-#         "images": images,
-#         "attention_mask": attention_mask,
-#         "labels": padded_expected_ouput_ids,
-#     }

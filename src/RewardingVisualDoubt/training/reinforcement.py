@@ -2,7 +2,6 @@ from typing import TypedDict
 
 import numpy as np
 import re
-import torch
 
 
 from RewardingVisualDoubt import shared
@@ -11,6 +10,7 @@ from RewardingVisualDoubt import shared
 class GameLogs(TypedDict):
     queries: list[str]
     responses: list[str]
+    ppo_target_responses: list[str]
     is_answer_correct: list[bool]
     scores: list[float]
     confidences: list[int | None]

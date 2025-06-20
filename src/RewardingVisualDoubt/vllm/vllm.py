@@ -232,32 +232,26 @@ def load_pretrained_llava_model_for_sft_training(
     return model
 
 
-def load_pretrained_llava_model_for_ppo_training(
-    device_str: str = shared.torch_devices.cuda.value,
-    precision: Precision = "16bit",
-    radialog_lora_weights_path: str = RadialogLoraWeightsPath.ORIGINAL.value,
-) -> trl.models.modeling_value_head.AutoModelForCausalLMWithValueHead:
-    print(
-        f"Adding LoRA adapters and value head to the model for PPO training using Radialog Lora Weights path: {radialog_lora_weights_path}"
-    )
-    model = load_baseline_llava_model_with_vision_modules(device=device_str, precision=precision)
-    model = adapters.add_finetuned_or_fresh_lora_adapters_and_fresh_value_head_to_LlavaLlamaForCausalLM_model(
-        model, radialog_lora_weights_path=radialog_lora_weights_path
-    )
-    return model
-
-
-def load_pretrained_llava_model_for_ppo_training_with_fresh_lora_adapters(
-    llava_model_path: str = RadialogMergedLlavaModelPath.BINARY_QA_WITH_CONFIDENCE_SFT.value,
+def load_pretrained_llava_model_for_ppo_training_with_lora_adapters(
+    llava_model_path: str | None = RadialogMergedLlavaModelPath.BINARY_QA_WITH_CONFIDENCE_SFT.value,
     device_str: str = shared.torch_devices.cuda.value,
     precision: Precision = "16bit",
     adapter_path: str | None = None,
 ) -> trl.models.modeling_value_head.AutoModelForCausalLMWithValueHead:
-    print(
-        f"Adding fresh set of LoRA adapters and a fresh value head to the model for PPO training using Llava model loaded from: {llava_model_path}"
-    )
+    if adapter_path is None:
+        print(
+            f"Adding fresh set of LoRA adapters and a fresh value head to the model for PPO training using Llava model loaded from: {llava_model_path}"
+        )
+    else:
+        print(
+            f"Adding loaded LoRA adapters and a fresh value head to the model for PPO training using Llava model and adapters loaded from: {llava_model_path} and adapter path: {adapter_path}"
+        )
     model = load_baseline_llava_model_with_vision_modules(
-        model_path=path.Path(llava_model_path),
+        model_path=(
+            path.Path(llava_model_path)
+            if llava_model_path
+            else _get_hf_model_path(repo_id=RADIALOG_BASELINE_LORA_ADAPTER_REPO_ID)
+        ),
         device=device_str,
         precision=precision,
     )
@@ -265,6 +259,11 @@ def load_pretrained_llava_model_for_ppo_training_with_fresh_lora_adapters(
         model, radialog_lora_weights_path=adapter_path
     )
     return model
+
+
+load_pretrained_llava_model_for_ppo_training_with_fresh_lora_adapters = (
+    load_pretrained_llava_model_for_ppo_training_with_lora_adapters  # for legacy purposes
+)
 
 
 def save_lora_merged_llava_model_to_local_dir(

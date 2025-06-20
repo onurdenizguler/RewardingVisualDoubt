@@ -1,10 +1,13 @@
 import math
 import typing as t
 
+
+SCALE = 5.0
 MAX_REWARD = -0.0010005003335835344
 MIN_REWARD = -6.907755278982137 / 2
-SCALE = 5.0
 WRONG_FORMAT_PENALTY = -SCALE * 3.0
+
+############### Reward functions for Binary Q&A Training ###############
 
 
 def default_reward_function(confidence: int | None, is_answer_correct: bool | None) -> float:

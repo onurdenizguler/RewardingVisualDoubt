@@ -6,8 +6,7 @@ import transformers
 from tqdm import tqdm
 
 import wandb
-from RewardingVisualDoubt import (dataset, prompter, response, reward, shared,
-                                  training, vllm)
+from RewardingVisualDoubt import dataset, prompter, response, reward, shared, training, vllm
 
 os.environ["WANDB_API_KEY"] = "da3cb086bbc110c16cbc5ba4c284a19b0b461710"
 
@@ -64,7 +63,6 @@ dataloader_train = dataset.get_mimic_cxr_llava_model_input_dataloader_for_sft(
     batch_size=TRAINING_BATCH_SIZE,
     padding_tokenizer=padding_tokenizer,
     num_workers=8,  # Let Torch decide.
-    simplified_batch=False,
 )
 
 dataloader_eval = dataset.get_mimic_cxr_llava_model_input_dataloader_for_sft(
@@ -72,7 +70,6 @@ dataloader_eval = dataset.get_mimic_cxr_llava_model_input_dataloader_for_sft(
     batch_size=VALIDATION_BATCH_SIZE,
     padding_tokenizer=padding_tokenizer,
     num_workers=8,  # Let Torch decide.
-    simplified_batch=False,
 )
 
 eval_batch_iterator = iter(dataloader_eval)

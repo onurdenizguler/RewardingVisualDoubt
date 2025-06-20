@@ -1,6 +1,7 @@
 import dataclasses
 import datetime
 import functools
+from http.client import NotConnected
 import itertools
 import os
 import pathlib as path
@@ -29,10 +30,13 @@ from RewardingVisualDoubt import (
 
 
 SELECTED_STEPS_UNTIL_CHECKPOINT = 50
-SELECTED_NUM_BATCHES_TO_EVALUATE = 20
-SELECTED_LEARNING_RATE = 1e-5
+SELECTED_NUM_BATCHES_TO_EVALUATE = 37
+SELECTED_LEARNING_RATE = 1e-6
+SELECTED_PERFORM_VALIDATION_BEFORE_STARTING_TRAINING = False
+SELECTED_REWARD_SCALE = 5
 SELECTED_CHANCE_TO_CHANGE_CONFIDENCE = 0.4
 SELECTED_ADAPTER_PATH = None
+
 SELECTED_BATCH_SIZE = 8
 SELECTED_NUM_EPOCHS = 1
 SELECTED_NUM_TRAINING_BATCHES_TO_SKIP = 1  # Do not set this to be much higher than a 100
@@ -142,6 +146,7 @@ def _handle_accumulating_game_logs(
     accumulating_game_logs: training.GameLogs,
     queries: list[str],
     responses: list[str],
+    ppo_target_responses: list[str],
     is_answer_correct: list[bool],
     scores: list[torch.FloatTensor],
     confidences: list[int | None],
@@ -151,6 +156,7 @@ def _handle_accumulating_game_logs(
 
     accumulating_game_logs["queries"].extend(queries)
     accumulating_game_logs["responses"].extend(responses)
+    accumulating_game_logs["ppo_target_responses"].extend(ppo_target_responses)
     accumulating_game_logs["is_answer_correct"].extend(is_answer_correct)
     accumulating_game_logs["scores"].extend([score.item() for score in scores])
     accumulating_game_logs["confidences"].extend(old_generated_confidence_values)
@@ -162,6 +168,7 @@ def _handle_accumulating_game_logs(
     truncated_accumulating_game_logs: training.GameLogs = {
         "queries": [],
         "responses": [],
+        "ppo_target_responses": [],
         "is_answer_correct": [],
         "scores": [],
         "confidences": [],
@@ -213,7 +220,7 @@ def radialog_binary_qa_ppo_training_step(
         images=images,
         return_prompt=False,
         batch_size=input_ids.shape[0],
-        use_cache=True,  # => not compatible with gradient checkpointing, that's why we disable it here.
+        use_cache=True,
         stopping_criteria=[stopping_criteria],
         **generation_kwargs_ppo,
     )
@@ -258,30 +265,51 @@ def radialog_binary_qa_ppo_training_step(
     )
 
     ######### 5.7 Take a PPO optimization step #########
+    reformulate_query_and_response_fn = functools.partial(
+        training.reformulate_query_and_response_for_binary_qa, tokenizer=tokenizer
+    )
+    reformulated_query_and_responses: list[training.ReformulatedQueryAndResponseDict] = [
+        reformulate_query_and_response_fn(query_ids=cur_input_ids, response=cur_response_text)
+        for cur_input_ids, cur_response_text in zip(input_ids_list, generated_texts)
+    ]
     model.train()
     model.gradient_checkpointing_enable()
+    ppo_queries = t.cast(
+        list[torch.LongTensor],
+        [
+            reformulated_query_and_response["query_ids"]
+            for reformulated_query_and_response in reformulated_query_and_responses
+        ],
+    )
+    ppo_responses = t.cast(
+        list[torch.LongTensor],
+        [
+            reformulated_query_and_response["response_ids"]
+            for reformulated_query_and_response in reformulated_query_and_responses
+        ],
+    )
     stats = ppo_trainer.multimodal_step(
-        queries=t.cast(list[torch.LongTensor], input_ids_list),
-        responses=t.cast(list[torch.LongTensor], generated_ids),
+        queries=ppo_queries,
+        responses=ppo_responses,
         scores=scores,
         images=images,
     )
 
     ######### 5.8 Create a report and log the training stats #########
     batch_report = {}
+    input_texts_list = tokenizer.batch_decode(
+        training.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
+    )
     queries_with_gt_labels = [
         f"(GT Label: {str(labels.bool().tolist()[idx])}) - {input_prompt}"
-        for idx, input_prompt in enumerate(
-            tokenizer.batch_decode(
-                training.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
-            )
-        )
+        for idx, input_prompt in enumerate(input_texts_list)
     ]
     if accumulating_game_logs:
         truncated_accumulating_game_logs = _handle_accumulating_game_logs(
             accumulating_game_logs,
             queries=queries_with_gt_labels,
             responses=generated_texts,
+            ppo_target_responses=tokenizer.batch_decode(ppo_responses),
             is_answer_correct=[
                 (gt_label is not None) and (gt_label == predicted_label)
                 for gt_label, predicted_label in zip(
@@ -298,6 +326,7 @@ def radialog_binary_qa_ppo_training_step(
             for r in zip(
                 truncated_accumulating_game_logs["queries"],
                 truncated_accumulating_game_logs["responses"],
+                truncated_accumulating_game_logs["ppo_target_responses"],
                 truncated_accumulating_game_logs["is_answer_correct"],
                 truncated_accumulating_game_logs["confidences"],
                 truncated_accumulating_game_logs["confidences_after_replacement"],
@@ -309,6 +338,7 @@ def radialog_binary_qa_ppo_training_step(
             columns=[
                 "query",
                 "response",
+                "ppo_target_response",
                 "is_answer_correct",
                 "confidence",
                 "confidence_after_replacement",
@@ -317,18 +347,21 @@ def radialog_binary_qa_ppo_training_step(
             ],
             rows=table_rows,
         )
-        stats["confidence_calibration_last_500_samples"] = wandb.Image(
-            evaluation.plot_calibration_curve(
-                confidences=truncated_accumulating_game_logs["confidences"],
-                is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
+        try:
+            stats["confidence_calibration_last_500_samples"] = wandb.Image(
+                evaluation.plot_calibration_curve(
+                    confidences=truncated_accumulating_game_logs["confidences"],
+                    is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
+                )
             )
-        )
-        stats["confidence_calibration_all_samples"] = wandb.Image(
-            evaluation.plot_calibration_curve(
-                confidences=accumulating_game_logs["confidences"],
-                is_answer_correct=accumulating_game_logs["is_answer_correct"],
+            stats["confidence_calibration_all_samples"] = wandb.Image(
+                evaluation.plot_calibration_curve(
+                    confidences=accumulating_game_logs["confidences"],
+                    is_answer_correct=accumulating_game_logs["is_answer_correct"],
+                )
             )
-        )
+        except:
+            pass
 
     batch_report["query"] = queries_with_gt_labels
     batch_report["response"] = generated_texts
@@ -352,6 +385,7 @@ def train(
     reward_function: t.Callable = SELECTED_REWARD_FUNCTION,
     adapter_path: str | None = SELECTED_ADAPTER_PATH,
     out_dir: path.Path = SELECTED_OUTPUT_DIR,
+    perform_validation_before_starting_training: bool = SELECTED_PERFORM_VALIDATION_BEFORE_STARTING_TRAINING,
 ):
 
     ######################################## 0. Define the environment ########################################
@@ -428,7 +462,12 @@ def train(
         mini_batch_size=mini_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         log_with="wandb",
-        tracker_project_name="radialog_binary_qa_ppo_training",
+        tracker_project_name=name_of_fine_tuning,
+        tracker_kwargs={
+            "wandb": {
+                "id": f"{datetime.datetime.now().strftime('%Y-%m-%d')}_{format(SELECTED_LEARNING_RATE, '.0e')}_{SELECTED_CHANCE_TO_CHANGE_CONFIDENCE}_{SELECTED_REWARD_SCALE}"
+            }
+        },
         project_kwargs=dataclasses.asdict(
             accelerate.utils.ProjectConfiguration(
                 project_dir="radialog_binary_qa_ppo_training", logging_dir="logs"
@@ -443,7 +482,7 @@ def train(
         "min_length": -1,  # don't ignore the EOS token (see above)
         "top_k": 0.0,  # no top-k sampling
         "top_p": 1.0,  # no nucleus sampling
-        "temperature": 1.0,  # DONT BE CREATIVE
+        "temperature": 1.0,  # Do not be random
         "do_sample": True,  # yes, we want to sample
         "pad_token_id": tokenizer.pad_token_id,  # most decoder models don't have a padding token - use EOS token instead (for this tokenizer it was already set to eos_token_id)
         "max_new_tokens": 50,  # let's not be chatty, we need only a few tokens to generate confidence but also let us not limit the response too much
@@ -451,8 +490,8 @@ def train(
     }
 
     generation_kwargs_eval = {
-        "top_p": 0.9,
-        "temperature": 0.6,
+        "top_p": 0.9,  # Let us limit the sampling a bit
+        "temperature": 0.8,  # Decrease the randomness
         "do_sample": True,
         "pad_token_id": tokenizer.eos_token_id,
         "max_new_tokens": 256,
@@ -479,6 +518,7 @@ def train(
         accumulating_game_logs: training.GameLogs = {
             "queries": [],
             "responses": [],
+            "ppo_target_responses": [],
             "is_answer_correct": [],
             "scores": [],
             "confidences": [],
@@ -490,44 +530,49 @@ def train(
             range(len(dataloader_train) - n_training_batches_to_skip),
             desc="Taking training steps...",
         ):
+            if not perform_validation_before_starting_training:
 
-            batch: dataset.MimicCxrLlavaModelInputBatchDict = next(iterator_train)
+                batch: dataset.MimicCxrLlavaModelInputBatchDict = next(iterator_train)
 
-            ######### 5.1 - 5.8 Perform a training step #########
-            scores = radialog_binary_qa_ppo_training_step(
-                model,
-                device,
-                tokenizer,
-                generation_kwargs_ppo,
-                ppo_trainer,
-                batch,
-                reward_function,
-                accumulating_game_logs,
-                chance_to_change_confidence,
-            )
+                ######### 5.1 - 5.8 Perform a training step #########
+                scores = radialog_binary_qa_ppo_training_step(
+                    model,
+                    device,
+                    tokenizer,
+                    generation_kwargs_ppo,
+                    ppo_trainer,
+                    batch,
+                    reward_function,
+                    accumulating_game_logs,
+                    chance_to_change_confidence,
+                )
 
-            train_scores_until_checkpoint += [s.item() for s in scores]
+                train_scores_until_checkpoint += [s.item() for s in scores]
 
             ######### 5.9 Checkpoint the model if checkpoint step is reached #########
-            if (step + 1) % steps_until_checkpoint == 0:
+            if (
+                step + 1
+            ) % steps_until_checkpoint == 0 or perform_validation_before_starting_training:
 
-                mean_train_score = np.mean(train_scores_until_checkpoint)
+                if not perform_validation_before_starting_training:
+                    mean_train_score = np.mean(train_scores_until_checkpoint)
 
-                print(
-                    f"Arrived at checkpoint {step + 1}. Average training score: {mean_train_score}"
-                )
-                print("Saving the model checkpoint...")
-                # Create dir if it does not exist
-                save_dir = os.path.join(
-                    out_dir,
-                    name_of_fine_tuning,
-                    datetime.datetime.now().strftime("%Y-%m-%d"),
-                    f"checkpoint-{step + 1}",
-                )
-                os.makedirs(save_dir, exist_ok=True)
-                model.save_pretrained(
-                    save_dir,
-                )
+                    print(
+                        f"Arrived at checkpoint {step + 1}. Average training score: {mean_train_score}"
+                    )
+                    print("Saving the model checkpoint...")
+                    # Create dir if it does not exist
+                    save_dir = os.path.join(
+                        out_dir,
+                        name_of_fine_tuning,
+                        datetime.datetime.now().strftime("%Y-%m-%d"),
+                        f"checkpoint-{step + 1}",
+                    )
+                    os.makedirs(save_dir, exist_ok=True)
+                    model.save_pretrained(
+                        save_dir,
+                    )
+                    wandb.log({"mean_score_training": mean_train_score})
 
                 model.eval()
                 eval_batch_scores_list = []
@@ -559,32 +604,36 @@ def train(
 
                 mean_eval_score = np.mean(eval_batch_scores_list)
                 mean_std_score = np.std(eval_batch_scores_list)
-                wandb.log({"mean_score_training": mean_train_score})
                 wandb.log({"mean_score_evaluation": mean_eval_score})
                 wandb.log({"std_score_evaluation": mean_std_score})
-
-                wandb.log(
-                    {
-                        "val_conf_calib": wandb.Image(
-                            evaluation.plot_calibration_curve(
-                                confidences=eval_batch_generated_confidence_values_list,
-                                is_answer_correct=eval_batch_is_answer_correct_list,
+                try:
+                    wandb.log(
+                        {
+                            "val_conf_calib": wandb.Image(
+                                evaluation.plot_calibration_curve(
+                                    confidences=eval_batch_generated_confidence_values_list,
+                                    is_answer_correct=eval_batch_is_answer_correct_list,
+                                )
                             )
-                        )
-                    }
-                )
+                        }
+                    )
+                except:
+                    pass
 
                 # Save the best performing model
-                if mean_eval_score > best_eval_score:
-                    save_dir = os.path.join(
-                        out_dir,
-                        name_of_fine_tuning,
-                        datetime.datetime.now().strftime("%Y-%m-%d"),
-                        "best_eval_model",
-                    )
-                    os.makedirs(save_dir, exist_ok=True)
-                    model.save_pretrained(save_dir)
-                    best_eval_score = mean_eval_score
+                if not perform_validation_before_starting_training:
+                    if mean_eval_score > best_eval_score:
+                        save_dir = os.path.join(
+                            out_dir,
+                            name_of_fine_tuning,
+                            datetime.datetime.now().strftime("%Y-%m-%d"),
+                            "best_eval_model",
+                        )
+                        os.makedirs(save_dir, exist_ok=True)
+                        model.save_pretrained(save_dir)
+                        best_eval_score = mean_eval_score
+
+                perform_validation_before_starting_training = False
 
 
 if __name__ == "__main__":

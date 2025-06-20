@@ -114,9 +114,7 @@ def add_finetuned_or_fresh_lora_adapters_and_fresh_value_head_to_LlavaLlamaForCa
 
     if is_model_quantized:
         model = peft.prepare_model_for_kbit_training(model)
-    print(
-        "Adding pretrained RaDialog LoRA adapters (or fresh LoRa adapters) and value head to the model..."
-    )
+    print("Adding pretrained (or fresh) RaDialog LoRA adapters and value head to the model...")
     trl_lora_model: trl.models.modeling_value_head.AutoModelForCausalLMWithValueHead = (
         trl.AutoModelForCausalLMWithValueHead.from_pretrained(model, peft_config=lora_config)
     )

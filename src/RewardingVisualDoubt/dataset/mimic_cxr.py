@@ -131,15 +131,16 @@ def create_mimic_cxr_dataset_df(
     return findings_and_split_df
 
 
-def create_balanced_binary_qa_mimic_cxr_dataset_df(
-    mimic_cxr_df: pd.DataFrame,
-) -> pd.DataFrame:
-    # TODO admit split data!
-
-    # check if df pickle exists in cache dir
-    if os.path.exists(os.path.join(CACHE_DIR, "balanced_binary_qa_mimic_cxr_df.pkl")):
-        print("Loading balanced_binary_qa_mimic_cxr_df from cache")
-        return pd.read_pickle(os.path.join(CACHE_DIR, "balanced_binary_qa_mimic_cxr_df.pkl"))
+def melt_mimic_cxr_df_into_binary_unambiguous_labels(mimic_cxr_df: pd.DataFrame) -> pd.DataFrame:
+    """Melt the mimic_cxr_df into a long format with binary labels for each disease.
+    Each row corresponds to one disease label for a study.
+    The ambiguous labels (-1.0) are filtered out, and only confident labels (1.0 and 0.0) are kept.
+    The labels are converted to booleans (1.0 becomes True, 0.0 becomes False).
+    Args:
+        mimic_cxr_df (pd.DataFrame): The original mimic_cxr_df with findings and split information.
+    Returns:
+        pd.DataFrame: A melted dataframe with binary labels for each disease.
+    """
 
     disease_cols = [disease.value for disease in ChexpertFinding]
     disease_cols.pop(disease_cols.index("No Finding"))
@@ -160,34 +161,4 @@ def create_balanced_binary_qa_mimic_cxr_dataset_df(
     # Convert labels to booleans (1.0 becomes True, 0.0 becomes False)
     df_melt["label"] = df_melt["label"].astype(bool)
 
-    # For each disease, oversample the minority class so that positives and negatives are balanced
-    balanced_dfs = []
-    for disease in df_melt["disease"].unique():
-        sub_df = df_melt[df_melt["disease"] == disease]
-        pos = sub_df[sub_df["label"] == True]
-        neg = sub_df[sub_df["label"] == False]
-
-        # Oversample the minority class using replacement
-        if len(pos) > len(neg):
-            neg_balanced = neg.sample(n=len(pos), replace=True, random_state=42)
-            balanced_sub = pd.concat([pos, neg_balanced])
-        elif len(neg) > len(pos):
-            pos_balanced = pos.sample(n=len(neg), replace=True, random_state=42)
-            balanced_sub = pd.concat([neg, pos_balanced])
-        else:
-            balanced_sub = sub_df  # Already balanced
-        balanced_dfs.append(balanced_sub)
-
-    # Combine all diseases into one dataframe and shuffle it
-    balanced_df_oversampled = pd.concat(balanced_dfs).reset_index(drop=True)
-    balanced_df_oversampled = balanced_df_oversampled.sample(frac=1, random_state=42).reset_index(
-        drop=True
-    )
-
-    # save df to cache dir
-    print("Saving balanced_binary_qa_mimic_cxr_df to cache")
-    balanced_df_oversampled.to_pickle(
-        os.path.join(CACHE_DIR, "balanced_binary_qa_mimic_cxr_df.pkl")
-    )
-
-    return balanced_df_oversampled
+    return df_melt
