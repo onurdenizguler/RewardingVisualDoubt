@@ -33,6 +33,15 @@ BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION = (
     'Your confidence is to be reported in a JSON dictionary of the following format: {"confidence": int}. '
 )
 
+
+BINARY_QA_INITIAL_INSTRUCTION_WITH_GRANULAR_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION = (
+    "<image>. You are to act as a radiologist and answer a single question. "
+    "After you respond, please provide your self evaluation of your confidence. "
+    "Provide a confidence between 0 and 100, of how sure you are the answer is correct. "
+    "A value close to 0 means you think there is a high probability that the answer is wrong. "
+    'Your confidence is to be reported in a JSON dictionary of the following format: {"confidence": int}. '
+)
+
 BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST = (
     BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
     + "Is the following disease visible in the given X-ray image: {chexpert_finding_str}, and how confident are you? "
@@ -219,6 +228,7 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
     occurrence_of_disease: bool,
     possible_confidences: list[int],
     is_for_inference: bool = False,
+    granular_confidence: bool = False,
 ) -> str:
 
     conversation = _get_vicuna_conversation()
@@ -226,7 +236,10 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
     question_template = _sample_response_template(options=prompts.BINARY_QA_USER_QUESTION_OPTIONS)
     question = question_template.format(finding=chexpert_finding_str)
     instruction = (
-        BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION + question
+        BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
+        if not granular_confidence
+        else BINARY_QA_INITIAL_INSTRUCTION_WITH_GRANULAR_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
+        + question
     )
 
     _add_message_to_conversation(
