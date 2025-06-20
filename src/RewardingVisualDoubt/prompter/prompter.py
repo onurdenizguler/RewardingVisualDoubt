@@ -7,65 +7,6 @@ import typing as T
 
 from RewardingVisualDoubt.prompter import prompts
 
-DEFAULT_RADIALOG_SYSTEM_MESSAGE = (
-    "A chat between a curious user and an artificial intelligence assistant acting as an experienced radiologist. "
-    "The assistant gives professional, detailed, and polite answers to the user's questions."
-)
-
-
-REPORT_GENERATION_INITIAL_INSTRUCTION = (
-    "<image>. Predicted Findings: {findings}. You are to act as a radiologist and write"
-    "the finding section of a chest x-ray radiology report for this X-ray image and the given predicted findings. "
-    "Write in the style of a radiologist, write one fluent text without enumeration, "
-    "be concise and don't provide explanations or reasons."
-)
-
-BINARY_QA_INITIAL_INSTRUCTION = (
-    "<image>. You are to act as a radiologist and answer the following question: "
-    "Is the following disease visible in the given X-ray image: {chexpert_finding_str}? "
-)
-
-BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION = (
-    "<image>. You are to act as a radiologist and answer a single question. "
-    "After you respond, please provide your self evaluation of your confidence. "
-    "Provide a confidence between 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, of how sure you are the answer is correct. "
-    "A value close to 0 means you think there is a high probability that the answer is wrong. "
-    'Your confidence is to be reported in a JSON dictionary of the following format: {"confidence": int}. '
-)
-
-
-BINARY_QA_INITIAL_INSTRUCTION_WITH_GRANULAR_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION = (
-    "<image>. You are to act as a radiologist and answer a single question. "
-    "After you respond, please provide your self evaluation of your confidence. "
-    "Provide a confidence between 0 and 100, of how sure you are the answer is correct. "
-    "A value close to 0 means you think there is a high probability that the answer is wrong. "
-    'Your confidence is to be reported in a JSON dictionary of the following format: {"confidence": int}. '
-)
-
-BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST = (
-    BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
-    + "Is the following disease visible in the given X-ray image: {chexpert_finding_str}, and how confident are you? "
-)
-
-
-POST_GENERATION_USER_CONFIDENCE_REQUEST = (
-    "Now evaluate your own response. How confident are you in your answer? "
-    "Provide a confidence between 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, of how sure you are the answer is correct. "
-    "A value close to 0 means you think there is a high probability that the answer is wrong. "
-    "The closer the value is to 10, the higher you think is the probability that the answer is correct. "
-)
-
-POST_GENERATION_ASSISTANT_CONFIDENCE_COMPLIANCE = (
-    "When asked how confident I am about a response, I consistently provide it in a JSON object, adhering to my policy."
-    "The confidence JSON follows this structure: {'confidence': int}."
-    "Here's my confidence JSON about my last response: "
-)
-
-
-BINARY_QA_ASSISTANT_RESPONSE_WITH_CONFIDENCE = (
-    'Yes, the disease is visible in the X-ray image. {{"confidence": {confidence_score} }}'
-)
-
 
 class Seperator(enum.Enum):
     BLANK_SPACE_SEPERATOR = " "
@@ -148,7 +89,7 @@ def _convert_conversation_into_prompt(conversation: Conversation) -> str:
 
 def _get_vicuna_conversation() -> Conversation:
     return Conversation(
-        system=DEFAULT_RADIALOG_SYSTEM_MESSAGE,
+        system=prompts.DEFAULT_RADIALOG_SYSTEM_MESSAGE,
         roles=[Role.USER, Role.ASSISTANT],
         messages=[],
         seperator_1=Seperator.BLANK_SPACE_SEPERATOR,
@@ -175,7 +116,7 @@ def build_report_generation_instruction_from_findings(findings: str) -> str:
         conversation=conversation,
         message=Message(
             role=Role.USER,
-            text=REPORT_GENERATION_INITIAL_INSTRUCTION.format(findings=findings),
+            text=prompts.REPORT_GENERATION_INITIAL_INSTRUCTION.format(findings=findings),
         ),
     )
     _add_message_to_conversation(
@@ -193,7 +134,9 @@ def build_binary_qa_instruction_from_disease_under_study(
         conversation=conversation,
         message=Message(
             role=Role.USER,
-            text=BINARY_QA_INITIAL_INSTRUCTION.format(chexpert_finding_str=chexpert_finding_str),
+            text=prompts.BINARY_QA_INITIAL_INSTRUCTION.format(
+                chexpert_finding_str=chexpert_finding_str
+            ),
         ),
     )
     _add_message_to_conversation(
@@ -211,7 +154,7 @@ def build_binary_qa_instruction_from_disease_under_study_with_confidence_request
         conversation=conversation,
         message=Message(
             role=Role.USER,
-            text=BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST.format(
+            text=prompts.BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST.format(
                 chexpert_finding_str=chexpert_finding_str
             ),
         ),
@@ -236,9 +179,9 @@ def build_binary_qa_prompt_with_response_and_confidence_for_sft(
     question_template = _sample_response_template(options=prompts.BINARY_QA_USER_QUESTION_OPTIONS)
     question = question_template.format(finding=chexpert_finding_str)
     instruction = (
-        BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
+        prompts.BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
         if not granular_confidence
-        else BINARY_QA_INITIAL_INSTRUCTION_WITH_GRANULAR_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
+        else prompts.BINARY_QA_INITIAL_INSTRUCTION_WITH_GRANULAR_CONFIDENCE_REQUEST_WITHOUT_THE_QUESTION
         + question
     )
 
@@ -287,12 +230,14 @@ def build_post_generation_user_confidence_request() -> str:
         conversation=conversation,
         message=Message(
             role=Role.USER,
-            text=POST_GENERATION_USER_CONFIDENCE_REQUEST,
+            text=prompts.POST_GENERATION_USER_CONFIDENCE_REQUEST,
         ),
     )
     _add_message_to_conversation(
         conversation=conversation,
-        message=Message(role=Role.ASSISTANT, text=POST_GENERATION_ASSISTANT_CONFIDENCE_COMPLIANCE),
+        message=Message(
+            role=Role.ASSISTANT, text=prompts.POST_GENERATION_ASSISTANT_CONFIDENCE_COMPLIANCE
+        ),
     )
     return _convert_conversation_into_prompt(conversation)
 
