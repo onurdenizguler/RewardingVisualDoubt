@@ -2,7 +2,6 @@ import typing as t
 
 import torch
 import transformers
-from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
 
 from RewardingVisualDoubt import dataset, shared
 
@@ -60,7 +59,8 @@ def generate_from_dataloader_for_batch(
             batch_llava_model_input_dict["text_prompt_input_ids"],
             batch_llava_model_input_dict["images"],
         )
-        stopping_criteria = KeywordsStoppingCriteria([STOP_STR], tokenizer, input_ids)
+        stopping_criteria = shared.KeywordsStoppingCriteria([STOP_STR], tokenizer, input_ids)
+        attention_mask = batch["batch_attention_mask"]
         output_ids = model.generate(
             input_ids=input_ids,
             images=images,
@@ -69,6 +69,7 @@ def generate_from_dataloader_for_batch(
             max_new_tokens=300,
             stopping_criteria=[stopping_criteria],
             pad_token_id=tokenizer.pad_token_id,
+            attention_mask=attention_mask,
             **generation_kwargs,
         )
         generated_texts = tokenizer.batch_decode(
@@ -78,7 +79,7 @@ def generate_from_dataloader_for_batch(
             pred = text.strip().replace("</s>", "")
             print(f"\n Metadata: {batch['batch_mimic_cxr_datapoint_metadata'][idx]}")
             print(f"Prompt: {batch['batch_prompts'][idx]}")
-            print(f"Label:", batch["batch_labels"][idx])
+            print(f"Label:", bool(batch["batch_labels"][idx]))
             print(f"File_idx {idx}, ASSISTANT: ", pred)
         if idx == num_batches_to_test:
             break
