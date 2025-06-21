@@ -5,11 +5,10 @@ import typing as t
 import torch
 import transformers
 import trl
-import wandb
 
-from RewardingVisualDoubt import dataset, evaluation, prompter, response, reward, shared
+from RewardingVisualDoubt import dataset, response, reward
 
-from . import llava_ppo, reinforcement, postprocessing
+from . import llava_ppo, reinforcement, postprocessing, logging
 
 
 ############### BINARY Q&A STEPS ###############
@@ -23,25 +22,21 @@ def radialog_binary_qa_ppo_evaluation_step(
     ppo_trainer: llava_ppo.MultimodalPPOTrainer,
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
     reward_function: t.Callable,
+    granular_confidence: bool = False,
 ) -> tuple[
     list[float],
     list[int | None],
     list[bool],
 ]:
 
-    batch_llava_model_input_dict = batch["batch_llava_model_input_dict"]
-    batch_llava_model_input_dict = dataset.move_llava_model_input_dict_to_device(
-        batch_llava_model_input_dict, device
+    ######### 5.1 Unpack the batch #########
+
+    input_ids, images, labels, stopping_criteria, input_ids_list = dataset.unpack_binary_qa_batch(
+        device=device,
+        tokenizer=tokenizer,
+        batch=batch,
+        postprocessor=postprocessing.remove_preciding_padding_from_batch_tensor,
     )
-    input_ids, images = (
-        batch_llava_model_input_dict["text_prompt_input_ids"],
-        batch_llava_model_input_dict["images"],
-    )
-    labels = t.cast(torch.Tensor, batch["batch_labels"]).to(device)
-    stopping_criteria = shared.KeywordsStoppingCriteria([prompter.STOP_STR], tokenizer, input_ids)
-    input_ids_list = postprocessing.remove_preciding_padding_from_batch_tensor(
-        input_ids
-    )  # WARNING: Is performed, as the ppo_trainer.generate() method handles padding and batching itself
 
     ######### 5.2 Generate the binary q&a answer and remove trailing padding tokens #########
     model.eval()
@@ -58,7 +53,7 @@ def radialog_binary_qa_ppo_evaluation_step(
 
     ######### 5.3 Parse the responses and compute the scores #########
     generated_texts = tokenizer.batch_decode(generated_ids)
-    generated_confidence_values = response.parse_confidences(generated_texts)
+    generated_confidence_values = response.parse_confidences(generated_texts, granular_confidence)
     generated_answer_labels = response.parse_binary_labels(generated_texts)
 
     scores = [
@@ -66,6 +61,7 @@ def radialog_binary_qa_ppo_evaluation_step(
             generated_answer_label,
             generated_confidence_value,
             ground_truth_label,
+            granular_confidence=granular_confidence,
             reward_function=reward_function,
         )
         for generated_answer_label, generated_confidence_value, ground_truth_label in zip(
@@ -90,22 +86,17 @@ def radialog_binary_qa_ppo_training_step(
     reward_function: t.Callable,
     accumulating_game_logs: reinforcement.GameLogs | None = None,
     chance_to_change_confidence: float = 0.5,  # Default value: every 2nd batch
+    granular_confidence: bool = False,
 ) -> list[torch.FloatTensor]:
 
     ######### 5.1 Unpack the batch #########
-    batch_llava_model_input_dict = batch["batch_llava_model_input_dict"]
-    batch_llava_model_input_dict = dataset.move_llava_model_input_dict_to_device(
-        batch_llava_model_input_dict, device
+
+    input_ids, images, labels, stopping_criteria, input_ids_list = dataset.unpack_binary_qa_batch(
+        device=device,
+        tokenizer=tokenizer,
+        batch=batch,
+        postprocessor=postprocessing.remove_preciding_padding_from_batch_tensor,
     )
-    input_ids, images = (
-        batch_llava_model_input_dict["text_prompt_input_ids"],
-        batch_llava_model_input_dict["images"],
-    )
-    labels = t.cast(torch.Tensor, batch["batch_labels"]).to(device)
-    stopping_criteria = shared.KeywordsStoppingCriteria([prompter.STOP_STR], tokenizer, input_ids)
-    input_ids_list = postprocessing.remove_preciding_padding_from_batch_tensor(
-        input_ids
-    )  # WARNING: Is performed, as the ppo_trainer.generate() method handles padding and batching itself
 
     ######### 5.2 Generate the binary q&a answer and remove trailing padding tokens #########
     model.eval()
@@ -122,7 +113,7 @@ def radialog_binary_qa_ppo_training_step(
 
     ######### 5.3 Parse the responses and compute the scores #########
     generated_texts = tokenizer.batch_decode(generated_ids)
-    generated_confidence_values = response.parse_confidences(generated_texts)
+    generated_confidence_values = response.parse_confidences(generated_texts, granular_confidence)
     old_generated_confidence_values = generated_confidence_values.copy()
     is_confidence_randomly_replaced = [False] * len(generated_confidence_values)
 
@@ -138,6 +129,7 @@ def radialog_binary_qa_ppo_training_step(
             generated_texts,
             generated_confidence_values,
             device=device,
+            granular_confidence=granular_confidence,
         )
 
     generated_answer_labels = response.parse_binary_labels(generated_texts)
@@ -147,6 +139,7 @@ def radialog_binary_qa_ppo_training_step(
             generated_answer_label,
             generated_confidence_value,
             ground_truth_label,
+            granular_confidence,
             reward_function=reward_function,
         )
         for generated_answer_label, generated_confidence_value, ground_truth_label in zip(
@@ -201,56 +194,21 @@ def radialog_binary_qa_ppo_training_step(
 
     table_rows = []
     if accumulating_game_logs:
-        truncated_accumulating_game_logs = _handle_accumulating_game_logs(
+        table_rows = logging.log_custom_metrics_for_binary_qa(
+            tokenizer,
             accumulating_game_logs,
-            queries=queries_with_gt_labels,
-            responses=generated_texts,
-            ppo_target_responses=tokenizer.batch_decode(ppo_responses),
-            is_answer_correct=[
-                (gt_label is not None) and (gt_label == predicted_label)
-                for gt_label, predicted_label in zip(
-                    generated_answer_labels, labels.bool().tolist()
-                )
-            ],
-            scores=scores,
-            confidences=generated_confidence_values,
-            old_generated_confidence_values=old_generated_confidence_values,
-            is_confidence_randomly_replaced=is_confidence_randomly_replaced,
+            input_ids,
+            labels,
+            generated_texts,
+            generated_confidence_values,
+            old_generated_confidence_values,
+            is_confidence_randomly_replaced,
+            generated_answer_labels,
+            scores,
+            ppo_responses,
+            stats,
+            queries_with_gt_labels,
         )
-        batch_size = input_ids.shape[0]
-        table_rows = [
-            list(r)
-            for r in zip(
-                accumulating_game_logs["queries"][-batch_size:],
-                accumulating_game_logs["responses"][-batch_size:],
-                accumulating_game_logs["ppo_target_responses"][-batch_size:],
-                accumulating_game_logs["is_answer_correct"][-batch_size:],
-                accumulating_game_logs["confidences"][-batch_size:],
-                accumulating_game_logs["confidences_after_replacement"][-batch_size:],
-                accumulating_game_logs["is_confidence_randomly_replaced"][-batch_size:],
-                accumulating_game_logs["scores"][-batch_size:],
-            )
-        ]
-
-        try:
-            stats["confidence_calibration_last_500_samples"] = wandb.Image(
-                evaluation.plot_calibration_curve(
-                    confidences=truncated_accumulating_game_logs["confidences"],
-                    is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
-                )
-            )
-            stats["confidence_calibration_all_samples"] = wandb.Image(
-                evaluation.plot_calibration_curve(
-                    confidences=accumulating_game_logs["confidences"],
-                    is_answer_correct=accumulating_game_logs["is_answer_correct"],
-                )
-            )
-        except:
-            pass
-
-        stats["ratio_of_changed_confidences"] = accumulating_game_logs[
-            "is_confidence_randomly_replaced"
-        ].count(True) / len(accumulating_game_logs["is_confidence_randomly_replaced"])
 
     ppo_trainer.log_stats(
         stats=stats,
@@ -276,16 +234,17 @@ def _handle_random_confidence_replacement(
     generated_texts: list[str],
     generated_confidence_values: list[int | None],
     device: torch.device,
+    granular_confidence: bool,
 ) -> tuple[list[torch.Tensor], list[str], list[int | None], list[int | None], list[bool]]:
     old_generated_confidence_values = generated_confidence_values.copy()
     generated_texts = reinforcement.overwrite_confidence(
-        generated_texts, generated_confidence_values
+        generated_texts, generated_confidence_values, granular_confidence=granular_confidence
     )
     generated_ids = []
     for text in generated_texts:
         ids = t.cast(torch.Tensor, tokenizer.encode(text, return_tensors="pt"))
         generated_ids.append(ids.squeeze(0).to(device=device))
-    generated_confidence_values = response.parse_confidences(generated_texts)
+    generated_confidence_values = response.parse_confidences(generated_texts, granular_confidence)
     is_confidence_randomly_replaced = [
         old_conf != new_conf
         for old_conf, new_conf in zip(old_generated_confidence_values, generated_confidence_values)
@@ -298,46 +257,3 @@ def _handle_random_confidence_replacement(
         old_generated_confidence_values,
         is_confidence_randomly_replaced,
     )
-
-
-def _handle_accumulating_game_logs(
-    accumulating_game_logs: reinforcement.GameLogs,
-    queries: list[str],
-    responses: list[str],
-    ppo_target_responses: list[str],
-    is_answer_correct: list[bool],
-    scores: list[torch.FloatTensor],
-    confidences: list[int | None],
-    old_generated_confidence_values: list[int | None],
-    is_confidence_randomly_replaced: list[bool],
-) -> reinforcement.GameLogs:
-
-    accumulating_game_logs["queries"].extend(queries)
-    accumulating_game_logs["responses"].extend(responses)
-    accumulating_game_logs["ppo_target_responses"].extend(ppo_target_responses)
-    accumulating_game_logs["is_answer_correct"].extend(is_answer_correct)
-    accumulating_game_logs["scores"].extend([score.item() for score in scores])
-    accumulating_game_logs["confidences"].extend(old_generated_confidence_values)
-    accumulating_game_logs["confidences_after_replacement"].extend(confidences)
-    accumulating_game_logs["is_confidence_randomly_replaced"].extend(
-        is_confidence_randomly_replaced
-    )
-
-    truncated_accumulating_game_logs: reinforcement.GameLogs = {
-        "queries": [],
-        "responses": [],
-        "ppo_target_responses": [],
-        "is_answer_correct": [],
-        "scores": [],
-        "confidences": [],
-        "confidences_after_replacement": [],
-        "is_confidence_randomly_replaced": [],
-    }
-    # If more than 500 rows, remove the extra rows
-    if len(accumulating_game_logs["queries"]) > 500:
-        for key in accumulating_game_logs.keys():
-            truncated_accumulating_game_logs[key] = accumulating_game_logs[key][-500:]
-    else:
-        truncated_accumulating_game_logs = accumulating_game_logs
-
-    return truncated_accumulating_game_logs

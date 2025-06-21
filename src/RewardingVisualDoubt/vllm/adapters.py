@@ -68,7 +68,7 @@ def add_finetuned_lora_adapters_to_LlavaLlamaForCausalLM_model(
         )
 
     lora_config = _get_lora_config()
-    print("Adding pretrained RaDialog LoRA adapters to the model...")
+    print("Adding LoRA adapters to the model...")
     lora_model = peft.get_peft_model(model, lora_config)
     radialog_mapped_lora_state_dict = _load_lora_weights_in_state_dict_format_for_radialog(
         lora_weights_path=radialog_lora_weights_path, is_target_model_with_value_head=False
@@ -114,7 +114,7 @@ def add_finetuned_or_fresh_lora_adapters_and_fresh_value_head_to_LlavaLlamaForCa
 
     if is_model_quantized:
         model = peft.prepare_model_for_kbit_training(model)
-    print("Adding pretrained (or fresh) RaDialog LoRA adapters and value head to the model...")
+    print("Adding LoRA adapters and value head to the model...")
     trl_lora_model: trl.models.modeling_value_head.AutoModelForCausalLMWithValueHead = (
         trl.AutoModelForCausalLMWithValueHead.from_pretrained(model, peft_config=lora_config)
     )

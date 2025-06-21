@@ -25,19 +25,19 @@ from RewardingVisualDoubt import (
 
 
 SELECTED_STEPS_UNTIL_CHECKPOINT = 50
-SELECTED_NUM_BATCHES_TO_EVALUATE = 37
 SELECTED_LEARNING_RATE = 1e-5
-SELECTED_PERFORM_VALIDATION_BEFORE_STARTING_TRAINING = False
+SELECTED_PERFORM_VALIDATION_BEFORE_STARTING_TRAINING = True
 SELECTED_REWARD_SCALE = reward.SCALE
 SELECTED_CHANCE_TO_CHANGE_CONFIDENCE = 0.4
-SELECTED_ADAPTER_PATH = None
+SELECTED_ADAPTER_PATH = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_ppo_training/2025-06-21_a/checkpoint-200/adapter_model.bin"
 SELECTED_GRANULAR_CONFIDENCE = True
 
-SELECTED_BATCH_SIZE = 8
+SELECTED_BATCH_SIZE = 12
+SELECTED_NUM_BATCHES_TO_EVALUATE = 0
+SELECTED_NUM_GRADIENT_ACCUMULATION_STEPS = 3
+SELECTED_MINI_BATCH_SIZE = 4
 SELECTED_NUM_EPOCHS = 1
 SELECTED_NUM_TRAINING_BATCHES_TO_SKIP = 1  # Do not set this to be much higher than a 100
-SELECTED_NUM_GRADIENT_ACCUMULATION_STEPS = 2
-SELECTED_NUM_MINI_BATCHES = 4
 SELECTED_OUTPUT_DIR = path.Path("/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models")
 SELECTED_FINETUNING_NAME = "radialog_binary_qa_ppo_training"
 SELECTED_REWARD_FUNCTION = reward.default_reward_function
@@ -51,7 +51,7 @@ def train(
     num_batches_to_evaluate: int = SELECTED_NUM_BATCHES_TO_EVALUATE,
     n_training_batches_to_skip: int = SELECTED_NUM_TRAINING_BATCHES_TO_SKIP,
     gradient_accumulation_steps: int = SELECTED_NUM_GRADIENT_ACCUMULATION_STEPS,
-    mini_batch_size: int = SELECTED_NUM_MINI_BATCHES,
+    mini_batch_size: int = SELECTED_MINI_BATCH_SIZE,
     learning_rate: float = SELECTED_LEARNING_RATE,
     chance_to_change_confidence: float = SELECTED_CHANCE_TO_CHANGE_CONFIDENCE,
     reward_function: t.Callable = SELECTED_REWARD_FUNCTION,
@@ -182,7 +182,7 @@ def train(
         "min_length": -1,  # don't ignore the EOS token (see above)
         "top_k": 0.0,  # no top-k sampling
         "top_p": 1.0,  # no nucleus sampling
-        "temperature": 1.0,  # Do not be random
+        "temperature": 1.0,  # Just take the logits as they are
         "do_sample": True,  # yes, we want to sample
         "pad_token_id": tokenizer.pad_token_id,  # most decoder models don't have a padding token - use EOS token instead (for this tokenizer it was already set to eos_token_id)
         "max_new_tokens": 50,  # let's not be chatty, we need only a few tokens to generate confidence but also let us not limit the response too much
@@ -245,6 +245,7 @@ def train(
                     reward_function,
                     accumulating_game_logs,
                     chance_to_change_confidence,
+                    granular_confidence,
                 )
 
                 train_scores_until_checkpoint += [s.item() for s in scores]
@@ -279,7 +280,11 @@ def train(
                 eval_batch_generated_confidence_values_list = []
                 eval_batch_is_answer_correct_list = []
                 for _ in tqdm(
-                    range(num_batches_to_evaluate),
+                    range(
+                        num_batches_to_evaluate
+                        if num_batches_to_evaluate > 0
+                        else len(dataloader_eval)
+                    ),
                     desc=f"Running evaluation at checkpoint {step + 1}",
                 ):
                     try:
@@ -296,6 +301,7 @@ def train(
                             ppo_trainer,
                             eval_batch,
                             reward.default_reward_function,
+                            granular_confidence,
                         )
                     )
                     eval_batch_scores_list.extend(scores)

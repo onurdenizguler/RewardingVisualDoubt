@@ -21,12 +21,16 @@ def parse_binary_labels(generated_answers: List[str]) -> List[bool | None]:
     return labels
 
 
-def parse_confidences(generated_confidences: List[str]) -> List[Optional[int]]:
+def parse_confidences(
+    generated_confidences: List[str], granular_confidence: bool
+) -> List[Optional[int]]:
     """
-    Extracts the confidence score (0-10) from the generated confidences.
+    Extracts the confidence score (0-10 for regular confidence or 0-100 for granular confidence) from the generated confidences.
     Returns None if extraction fails or value is invalid.
     """
     confidences = []
+    LOWER_CONFIDENCE_BOUND = 0
+    UPPER_CONFIDENCE_BOUND = 10 if not granular_confidence else 100
     for conf in generated_confidences:
         # Clean and search for confidence key-value pair, allowing single quotes and unquoted keys
         clean_conf = conf.replace("\n", "").strip()
@@ -39,7 +43,7 @@ def parse_confidences(generated_confidences: List[str]) -> List[Optional[int]]:
         if match:
             try:
                 value = int(match.group(1))  # Ensure it's an integer
-                if 0 <= value <= 10:
+                if LOWER_CONFIDENCE_BOUND <= value <= UPPER_CONFIDENCE_BOUND:
                     confidences.append(value)
                 else:
                     confidences.append(None)
