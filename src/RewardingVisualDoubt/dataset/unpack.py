@@ -4,9 +4,8 @@ import torch
 import transformers
 
 
-from RewardingVisualDoubt import dataset, prompter, shared
-
-from . import postprocessing
+from . import dataset
+from RewardingVisualDoubt import prompter, shared
 
 
 def unpack_binary_qa_batch(

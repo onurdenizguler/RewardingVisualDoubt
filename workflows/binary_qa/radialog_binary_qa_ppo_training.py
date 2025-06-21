@@ -29,11 +29,11 @@ SELECTED_LEARNING_RATE = 1e-5
 SELECTED_PERFORM_VALIDATION_BEFORE_STARTING_TRAINING = True
 SELECTED_REWARD_SCALE = reward.SCALE
 SELECTED_CHANCE_TO_CHANGE_CONFIDENCE = 0.4
-SELECTED_ADAPTER_PATH = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_ppo_training/2025-06-21_a/checkpoint-200/adapter_model.bin"
+SELECTED_ADAPTER_PATH = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_ppo_training/2025-06-21_b/checkpoint-150/adapter_model.bin"
 SELECTED_GRANULAR_CONFIDENCE = True
 
 SELECTED_BATCH_SIZE = 12
-SELECTED_NUM_BATCHES_TO_EVALUATE = 0
+SELECTED_NUM_BATCHES_TO_EVALUATE = 0  # Set to zero to evaulate on the whole validation set
 SELECTED_NUM_GRADIENT_ACCUMULATION_STEPS = 3
 SELECTED_MINI_BATCH_SIZE = 4
 SELECTED_NUM_EPOCHS = 1
@@ -190,8 +190,8 @@ def train(
     }
 
     generation_kwargs_eval = {
-        "top_p": 0.9,  # Let us limit the sampling a bit
-        "temperature": 0.8,  # Decrease the randomness
+        "top_p": 1.0,  # Let us limit the sampling a bit
+        "temperature": 1.0,  # Decrease the randomness
         "do_sample": True,
         "pad_token_id": tokenizer.eos_token_id,
         "max_new_tokens": 256,
@@ -208,7 +208,6 @@ def train(
             tokenizer=tokenizer,
         ),
     )
-
     ######################################## 5. Train the model ########################################
 
     for epoch in range(num_epochs):
@@ -246,6 +245,8 @@ def train(
                     accumulating_game_logs,
                     chance_to_change_confidence,
                     granular_confidence,
+                    log_calibration_plot=(step % int(steps_until_checkpoint / 4))
+                    == 0,  # log at every quarter of the checkpoint interval
                 )
 
                 train_scores_until_checkpoint += [s.item() for s in scores]
@@ -261,18 +262,19 @@ def train(
                     print(
                         f"Arrived at checkpoint {step + 1}. Average training score: {mean_train_score}"
                     )
-                    print("Saving the model checkpoint...")
-                    # Create dir if it does not exist
-                    save_dir = os.path.join(
-                        out_dir,
-                        name_of_fine_tuning,
-                        datetime.datetime.now().strftime("%Y-%m-%d"),
-                        f"checkpoint-{step + 1}",
-                    )
-                    os.makedirs(save_dir, exist_ok=True)
-                    model.save_pretrained(
-                        save_dir,
-                    )
+                    if (step + 1) % (3 * steps_until_checkpoint) == 0:
+                        print("Saving the model checkpoint...")
+                        # Create dir if it does not exist
+                        save_dir = os.path.join(
+                            out_dir,
+                            name_of_fine_tuning,
+                            datetime.datetime.now().strftime("%Y-%m-%d"),
+                            f"checkpoint-{step + 1}",
+                        )
+                        os.makedirs(save_dir, exist_ok=True)
+                        ppo_trainer.save_pretrained(
+                            save_dir,
+                        )
                     wandb.log({"mean_score_training": mean_train_score})
 
                 model.eval()
@@ -336,7 +338,7 @@ def train(
                             "best_eval_model",
                         )
                         os.makedirs(save_dir, exist_ok=True)
-                        model.save_pretrained(save_dir)
+                        ppo_trainer.save_pretrained(save_dir)
                         best_eval_score = mean_eval_score
 
                 perform_validation_before_starting_training = False

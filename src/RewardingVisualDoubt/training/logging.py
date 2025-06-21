@@ -66,6 +66,7 @@ def log_custom_metrics_for_binary_qa(
     ppo_responses: list[torch.LongTensor],
     stats: dict[str, t.Any],
     queries_with_gt_labels: list[str],
+    log_calibration_plot: bool,
 ) -> list[list[str]]:
 
     truncated_accumulating_game_logs = _handle_accumulating_game_logs_for_binary_qa(
@@ -97,22 +98,23 @@ def log_custom_metrics_for_binary_qa(
         )
     ]
 
-    try:
-        stats["confidence_calibration_last_500_samples"] = wandb.Image(
-            evaluation.plot_calibration_curve(
-                confidences=truncated_accumulating_game_logs["confidences"],
-                is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
+    if log_calibration_plot:
+        try:
+            stats["confidence_calibration_last_500_samples"] = wandb.Image(
+                evaluation.plot_calibration_curve(
+                    confidences=truncated_accumulating_game_logs["confidences"],
+                    is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
+                )
             )
-        )
-        stats["confidence_calibration_all_samples"] = wandb.Image(
-            evaluation.plot_calibration_curve(
-                confidences=accumulating_game_logs["confidences"],
-                is_answer_correct=accumulating_game_logs["is_answer_correct"],
+            stats["confidence_calibration_all_samples"] = wandb.Image(
+                evaluation.plot_calibration_curve(
+                    confidences=accumulating_game_logs["confidences"],
+                    is_answer_correct=accumulating_game_logs["is_answer_correct"],
+                )
             )
-        )
 
-    except:
-        pass
+        except:
+            pass
 
     bins_100 = evaluation.binify_accuracies(
         confidences=truncated_accumulating_game_logs["confidences"][-100:],

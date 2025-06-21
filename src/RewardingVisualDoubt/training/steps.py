@@ -87,6 +87,7 @@ def radialog_binary_qa_ppo_training_step(
     accumulating_game_logs: reinforcement.GameLogs | None = None,
     chance_to_change_confidence: float = 0.5,  # Default value: every 2nd batch
     granular_confidence: bool = False,
+    log_calibration_plot: bool = False,
 ) -> list[torch.FloatTensor]:
 
     ######### 5.1 Unpack the batch #########
@@ -208,6 +209,7 @@ def radialog_binary_qa_ppo_training_step(
             ppo_responses,
             stats,
             queries_with_gt_labels,
+            log_calibration_plot,
         )
 
     ppo_trainer.log_stats(
