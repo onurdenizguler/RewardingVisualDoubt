@@ -1,8 +1,7 @@
+import re
 from typing import TypedDict
 
 import numpy as np
-import re
-
 
 from RewardingVisualDoubt import shared
 
@@ -35,13 +34,18 @@ def _replace_confidence_value_in_text(
     return re.sub(pattern, replace_confidence, text)
 
 
-def _select_random_confidence() -> int:
-    return np.random.choice(shared.POSSIBLE_CONFIDENCES)
+def _select_random_confidence(granular_confidence: bool) -> int:
+    return (
+        np.random.choice(shared.POSSIBLE_CONFIDENCES)
+        if not granular_confidence
+        else np.random.choice(shared.POSSIBLE_GRANULAR_CONFIDENCES)
+    )
 
 
 def overwrite_confidence(
     generated_texts: list[str],
     confidences: list[int | None],
+    granular_confidence: bool,
 ) -> list[str]:
     """
     Overwrite the confidence of the predictions to a new value.
@@ -51,7 +55,7 @@ def overwrite_confidence(
     for idx, confidence in enumerate(confidences):
         if confidence is not None:  # The generated text is guaranteed to be a valid prediction
             # change the confidence to a new value
-            selected_new_confidence = _select_random_confidence()
+            selected_new_confidence = _select_random_confidence(granular_confidence)
             try:
                 updated_generated_texts.append(
                     _replace_confidence_value_in_text(

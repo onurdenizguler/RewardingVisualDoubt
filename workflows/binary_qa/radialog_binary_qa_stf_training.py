@@ -3,10 +3,11 @@ import pathlib as path
 
 import torch
 import transformers
+import wandb
 from tqdm import tqdm
 
-import wandb
-from RewardingVisualDoubt import dataset, prompter, response, reward, shared, training, vllm
+from RewardingVisualDoubt import (dataset, prompter, response, reward, shared,
+                                  training, vllm)
 
 os.environ["WANDB_API_KEY"] = "da3cb086bbc110c16cbc5ba4c284a19b0b461710"
 

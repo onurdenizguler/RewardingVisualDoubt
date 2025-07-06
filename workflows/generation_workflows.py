@@ -5,8 +5,8 @@ infrastructure.make_ipython_reactive_to_changing_codebase()
 
 import functools
 from pathlib import Path
-import torch
 
+import torch
 from LLAVA_Biovil.llava.conversation import SeparatorStyle, conv_vicuna_v1
 
 from RewardingVisualDoubt import dataset, inference, prompter, shared, vllm

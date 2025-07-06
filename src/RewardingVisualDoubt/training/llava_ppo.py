@@ -1,12 +1,14 @@
 import math
 import time
 import typing
+import warnings
 from typing import List
 
 import numpy as np
 import peft
 import torch
 import trl
+import wandb
 from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
 
 from RewardingVisualDoubt import shared
@@ -640,3 +642,57 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         padded_logprobs = pad_tensor_list(all_logprobs, max_logprobs_seq_len, pad_2d)
 
         return padded_logits, padded_values, padded_logprobs, padded_masks
+
+    def log_stats(
+        self,
+        stats: dict,
+        table_rows: list,
+        column_names: list,
+        rewards: List[torch.FloatTensor],
+    ):
+        """
+        A function that logs all the training stats. Call it at the end of each epoch.
+
+        Args:
+            stats (dict[str, Any]):
+                A dictionary of training stats.
+            batch (dict[str, Any]):
+                A dictionary of batch data, this contains the queries and responses.
+            rewards (`List[torch.FloatTensor]`):
+                A tensor of rewards.
+        """
+        # Log only if we are in the main process
+        assert (
+            self.accelerator.is_main_process
+        ), "You are trying to log stats from a non-main process. Please make sure to call this function only from the main process."
+
+        logs = {}
+
+        if not isinstance(rewards, torch.Tensor):
+            rewards = torch.tensor(rewards).to(self.current_device)
+
+        logs.update({"game_log": wandb.Table(columns=column_names, rows=table_rows)})
+
+        logs.update(stats)
+
+        # manually cast in fp32 for bf16 torch tensors
+        for k, v in logs.items():
+            if isinstance(v, torch.Tensor) and v.dtype == torch.bfloat16:
+                logs[k] = v.float()
+
+        logs["env/reward_mean"] = torch.mean(rewards).cpu().numpy().item()
+        logs["env/reward_std"] = torch.std(rewards).cpu().numpy().item()
+        logs["env/reward_dist"] = rewards.cpu().numpy()
+
+        logs["env/reward_mean"] = torch.mean(rewards).cpu().numpy().item()
+        logs["env/reward_std"] = torch.std(rewards).cpu().numpy().item()
+        logs["env/reward_dist"] = rewards.cpu().numpy()
+
+        if self.config.log_with == "tensorboard":
+            # update the current step
+            self.current_step += 1
+
+        self.accelerator.log(
+            logs,
+            step=self.current_step if self.config.log_with == "tensorboard" else None,
+        )

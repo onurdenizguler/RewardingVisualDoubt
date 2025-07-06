@@ -1,18 +1,14 @@
+import functools
+import json
 import typing as t
+from pathlib import Path
+
 import torch
 from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
 from tqdm import tqdm
-from RewardingVisualDoubt import (
-    dataset,
-    prompter,
-    response,
-    shared,
-    training,
-    vllm,
-)
-import json
-import functools
-from pathlib import Path
+
+from RewardingVisualDoubt import (dataset, prompter, response, shared,
+                                  training, vllm)
 
 # RESULTS_OUTPUT_PATH = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/radialog_original_binary_qa_results_train.jsonl"
 RESULTS_OUTPUT_PATH = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/radialog_confidence_ppo_2025-05-07_binary_qa_results_train.jsonl"

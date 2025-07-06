@@ -13,6 +13,9 @@ class Seperator(enum.Enum):
     END_OF_SEQUENCE_SEPERATOR = "</s>"
 
 
+STOP_STR = Seperator.END_OF_SEQUENCE_SEPERATOR.value
+
+
 class Role(enum.Enum):
     """A class that keeps all conversation roles."""
 
