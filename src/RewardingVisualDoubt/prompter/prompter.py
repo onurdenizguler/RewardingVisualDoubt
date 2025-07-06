@@ -112,6 +112,31 @@ def _get_vicuna_conversatio_without_system_message() -> Conversation:
 
 ############################################## PROMPT BUILDING ##############################################
 
+#### LLM-as-judge requests
+
+
+def build_fact_checking_instruction_for_generated_sentence_against_gt_report(
+    generated_sentence: str, gt_report: str
+) -> str:
+    conversation = _get_vicuna_conversation()
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(
+            role=Role.USER,
+            text=prompts.FACT_CHECKING_INITIAL_INSTRUCTION.format(
+                generated_sentence=generated_sentence, gt_report=gt_report
+            ),
+        ),
+    )
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(role=Role.ASSISTANT, text=None),
+    )
+    return _convert_conversation_into_prompt(conversation)
+
+
+#### Report generation requests
+
 
 def build_report_generation_instruction_from_findings(findings: str) -> str:
     conversation = _get_vicuna_conversation()
@@ -127,6 +152,13 @@ def build_report_generation_instruction_from_findings(findings: str) -> str:
         message=Message(role=Role.ASSISTANT, text=None),
     )
     return _convert_conversation_into_prompt(conversation)
+
+
+def build_report_generation_prompt_with_response_and_confidence_for_sft():
+    pass
+
+
+#### Binary q&a requests
 
 
 def build_binary_qa_instruction_from_disease_under_study(

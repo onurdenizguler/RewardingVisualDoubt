@@ -3,6 +3,15 @@ DEFAULT_RADIALOG_SYSTEM_MESSAGE = (
     "The assistant gives professional, detailed, and polite answers to the user's questions."
 )
 
+FACT_CHECKING_INITIAL_INSTRUCTION = (
+    "You are to act as a radiologist and check a claim your medical student has written"
+    "against the ground truth report. Carefully read the ground truth report and then"
+    "read the student's sentence to see if it is correct given the ground truth report. "
+    "If the student's sentence is correct, return 'True'. If it is incorrect, return 'False'. "
+    "If the student's sentence is not related to the ground truth report, return 'Unrelated'. "
+    "Report: {gt_report} \n"
+    "Student's sentence: {generated_sentence} "
+)
 
 REPORT_GENERATION_INITIAL_INSTRUCTION = (
     "<image>. Predicted Findings: {findings}. You are to act as a radiologist and write"
