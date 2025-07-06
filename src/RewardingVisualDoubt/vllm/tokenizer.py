@@ -1,7 +1,9 @@
 import transformers
-from LLAVA_Biovil.llava.constants import (DEFAULT_IM_END_TOKEN,
-                                          DEFAULT_IM_START_TOKEN,
-                                          DEFAULT_IMAGE_PATCH_TOKEN)
+from LLAVA_Biovil.llava.constants import (
+    DEFAULT_IM_END_TOKEN,
+    DEFAULT_IM_START_TOKEN,
+    DEFAULT_IMAGE_PATCH_TOKEN,
+)
 
 LLAVA_BASE_MODEL_NAME = "liuhaotian/llava-v1.5-7b"
 
@@ -32,7 +34,7 @@ def load_pretrained_text_only_llava_tokenizer(
 
 
 def load_pretrained_llava_tokenizer_with_image_support(
-    model_base: str = LLAVA_BASE_MODEL_NAME,
+    model_base: str = LLAVA_BASE_MODEL_NAME, for_use_in_padding: bool = False
 ) -> transformers.LlamaTokenizer:
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_base, use_fast=False
@@ -40,4 +42,6 @@ def load_pretrained_llava_tokenizer_with_image_support(
     assert isinstance(tokenizer, transformers.LlamaTokenizer)
     tokenizer = _modify_tokenizer_for_image_input(tokenizer)
     tokenizer.pad_token_id = tokenizer.eos_token_id
+    if for_use_in_padding:
+        tokenizer.padding_side = "left"
     return tokenizer

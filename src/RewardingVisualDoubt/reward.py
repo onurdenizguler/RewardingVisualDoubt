@@ -1,5 +1,6 @@
 import math
 import typing as t
+
 from RewardingVisualDoubt import shared
 
 SCALE = 5.0

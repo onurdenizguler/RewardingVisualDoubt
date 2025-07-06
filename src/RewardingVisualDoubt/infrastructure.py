@@ -29,8 +29,8 @@ def human_readable_size(size_in_bytes):
     return f"{size_in_bytes:.2f} {unit}"
 
 
-def chech_cuda_availablity():
-    print(torch.cuda.is_available())
+def chech_cuda_availablity() -> bool:
+    return torch.cuda.is_available()
 
 
 def check_memory_occupation_by_torch_tensors():

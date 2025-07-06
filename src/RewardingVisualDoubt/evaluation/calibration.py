@@ -1,5 +1,6 @@
-import matplotlib.pyplot as plt
 import typing as t
+
+import matplotlib.pyplot as plt
 
 
 def compute_ece(avg_acc: list[float], counts: list[int]):

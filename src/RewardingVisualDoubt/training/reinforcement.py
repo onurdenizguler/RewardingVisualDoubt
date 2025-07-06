@@ -1,8 +1,7 @@
+import re
 from typing import TypedDict
 
 import numpy as np
-import re
-
 
 from RewardingVisualDoubt import shared
 

@@ -81,5 +81,5 @@ def generate_from_dataloader_for_batch(
             print(f"Prompt: {batch['batch_prompts'][idx]}")
             print(f"Label:", bool(batch["batch_labels"][idx]))
             print(f"File_idx {idx}, ASSISTANT: ", pred)
-        if idx == num_batches_to_test:
+        if idx + 1 == num_batches_to_test:
             break

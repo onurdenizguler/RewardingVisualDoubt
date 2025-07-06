@@ -10,19 +10,11 @@ import accelerate
 import numpy as np
 import torch
 import trl
+import wandb
 from tqdm import tqdm
 
-import wandb
-from RewardingVisualDoubt import (
-    dataset,
-    evaluation,
-    prompter,
-    reward,
-    shared,
-    training,
-    vllm,
-)
-
+from RewardingVisualDoubt import (dataset, evaluation, prompter, reward,
+                                  shared, training, vllm)
 
 SELECTED_STEPS_UNTIL_CHECKPOINT = 50
 SELECTED_LEARNING_RATE = 1e-5

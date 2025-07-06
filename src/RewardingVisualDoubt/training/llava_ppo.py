@@ -1,16 +1,15 @@
 import math
 import time
 import typing
-from typing import List
 import warnings
+from typing import List
 
 import numpy as np
 import peft
 import torch
 import trl
-from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
 import wandb
-
+from LLAVA_Biovil.llava import LlavaLlamaForCausalLM
 
 from RewardingVisualDoubt import shared
 

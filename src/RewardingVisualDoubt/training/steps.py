@@ -8,8 +8,7 @@ import trl
 
 from RewardingVisualDoubt import dataset, response, reward
 
-from . import llava_ppo, reinforcement, postprocessing, logging
-
+from . import llava_ppo, logging, postprocessing, reinforcement
 
 ############### BINARY Q&A STEPS ###############
 
