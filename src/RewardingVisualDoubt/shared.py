@@ -2,7 +2,11 @@
 import enum
 import typing as t
 
+###### IMPORTS FROM THE RADIALOG/LLAVA REPOSITORY ######
+from LLAVA_Biovil.llava.mm_utils import tokenizer_image_token
 from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
+from utils import remap_to_uint8, create_chest_xray_transform_for_inference
+from LLAVA_Biovil import llava
 
 
 class torch_devices(enum.Enum):

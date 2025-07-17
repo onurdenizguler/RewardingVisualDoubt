@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import peft
-from transformers import AutoModelForCausalLM
 
 from RewardingVisualDoubt import infrastructure, shared
 
@@ -19,7 +18,7 @@ def shortcut_load_radialog_binary_qa_model_after_ppo_training() -> (
     )
 
 
-def shortcut_load_radialog_binary_qa_sft_model() -> vllm.llava.LlavaLlamaForCausalLM:
+def shortcut_load_radialog_binary_qa_sft_model() -> shared.llava.LlavaLlamaForCausalLM:
     return vllm.load_baseline_llava_model_with_vision_modules(
         model_path=Path(vllm.RadialogMergedLlavaModelPath.BINARY_QA_WITH_CONFIDENCE_SFT.value),
         device="cuda" if infrastructure.chech_cuda_availablity() else "cpu",

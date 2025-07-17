@@ -49,7 +49,7 @@ def generate_from_dataloader_for_batch(
     num_batches_to_test: int = 10,
     **generation_kwargs,
 ):
-    for idx, batch in enumerate(dataloader_test):
+    for i, batch in enumerate(dataloader_test):
         batch = t.cast(dataset.MimicCxrLlavaModelInputBatchDict, batch)
         batch_llava_model_input_dict = batch["batch_llava_model_input_dict"]
         batch_llava_model_input_dict = dataset.move_llava_model_input_dict_to_device(
@@ -81,5 +81,5 @@ def generate_from_dataloader_for_batch(
             print(f"Prompt: {batch['batch_prompts'][idx]}")
             print(f"Label:", bool(batch["batch_labels"][idx]))
             print(f"File_idx {idx}, ASSISTANT: ", pred)
-        if idx + 1 == num_batches_to_test:
+        if i + 1 == num_batches_to_test:
             break

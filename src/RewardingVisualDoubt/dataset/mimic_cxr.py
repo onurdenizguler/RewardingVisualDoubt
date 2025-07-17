@@ -1,7 +1,7 @@
 import dataclasses
 import enum
 import os
-import typing as T
+import typing as t
 from pathlib import Path
 
 import pandas as pd
@@ -46,7 +46,7 @@ class ChexpertLabel(enum.Enum):
 class MimicCxrDatapoint:
     subject_id: int
     study_id: int
-    disease_labels: T.List[ChexpertFinding]
+    disease_labels: t.List[ChexpertFinding]
     img_path: Path
     report: str
 
@@ -64,9 +64,15 @@ class MimicCxrBinaryQADatapoint:
 class MimicCxrReportGenerationDatapoint:
     subject_id: int
     study_id: int
-    disease_labels: T.List[ChexpertFinding]
+    disease_labels: t.List[ChexpertFinding]
     img_path: Path
     report: str
+
+
+@dataclasses.dataclass
+class GeneratedSentencesAgainstGroundTurthReportDatapoint:
+    groundtruth_report: str
+    generated_sentences: t.List[str]
 
 
 @dataclasses.dataclass

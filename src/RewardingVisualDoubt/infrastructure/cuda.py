@@ -1,21 +1,5 @@
-import warnings
-
 import torch
-
-
-def supress_known_warnings():
-    warnings.filterwarnings(
-        "ignore", message="`resume_download` is deprecated and will be removed in version 1.0.0"
-    )
-
-
-def make_ipython_reactive_to_changing_codebase():
-    from IPython.core.getipython import get_ipython
-
-    ipython_client = get_ipython()
-    if ipython_client:
-        ipython_client.run_line_magic(magic_name="load_ext", line="autoreload")
-        ipython_client.run_line_magic(magic_name="autoreload", line="2")
+import os
 
 
 def human_readable_size(size_in_bytes):
@@ -60,3 +44,13 @@ def check_total_gpu_memory():
         print(f"Total GPU memory: {human_readable_size(total_memory)}")
     else:
         print("CUDA is not available.")
+
+
+def get_visible_and_current_cuda_devices():
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+    current_device = torch.cuda.current_device()
+    print(f"Visible CUDA devices: {visible_devices}")
+
+    gpu_id_on_node = visible_devices.split(",")[current_device]
+    print(f"My visible device index: {current_device}")
+    print(f"My actual GPU index on node: {gpu_id_on_node}")
