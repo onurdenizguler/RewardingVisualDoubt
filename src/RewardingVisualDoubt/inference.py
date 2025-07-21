@@ -41,6 +41,17 @@ def generate_radialog_answer_for_binary_qa_for_single_study(
     return pred
 
 
+def batch_decode_generated_texts(
+    tokenizer: transformers.PreTrainedTokenizer,
+    output_ids: torch.Tensor,
+    input_ids: torch.Tensor,
+) -> list[str]:
+    generated_texts = tokenizer.batch_decode(
+        output_ids[:, input_ids.shape[1] :], skip_special_tokens=True
+    )
+    return [text.strip().replace("</s>", "") for text in generated_texts]
+
+
 def generate_from_dataloader_for_batch(
     STOP_STR: str,
     tokenizer: transformers.PreTrainedTokenizer,
@@ -72,9 +83,7 @@ def generate_from_dataloader_for_batch(
             attention_mask=attention_mask,
             **generation_kwargs,
         )
-        generated_texts = tokenizer.batch_decode(
-            output_ids[:, input_ids.shape[1] :], skip_special_tokens=True
-        )
+        generated_texts = batch_decode_generated_texts(tokenizer, output_ids, input_ids)
         for idx, text in enumerate(generated_texts):
             pred = text.strip().replace("</s>", "")
             print(f"\n Metadata: {batch['batch_mimic_cxr_datapoint_metadata'][idx]}")
