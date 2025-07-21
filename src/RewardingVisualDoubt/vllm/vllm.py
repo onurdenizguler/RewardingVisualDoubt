@@ -220,7 +220,7 @@ def load_pretrained_llava_model_for_sft_training(
     device_str: str = shared.torch_devices.cuda.value,
     precision: Precision = "16bit",
     radialog_lora_weights_path: str = RadialogLoraWeightsPath.ORIGINAL.value,
-) -> peft.PeftModel:
+) -> peft.PeftModelForCausalLM:
     print(
         f"Adding LoRA adapters to the model for SFT training or inference from Radialog Lora Weights path: {radialog_lora_weights_path}"
     )

@@ -1,5 +1,6 @@
-import torch
 import os
+
+import torch
 
 
 def human_readable_size(size_in_bytes):

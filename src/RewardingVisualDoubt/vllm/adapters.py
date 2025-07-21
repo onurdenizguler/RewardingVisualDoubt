@@ -56,7 +56,7 @@ def _load_lora_weights_in_state_dict_format_for_radialog(
 def add_finetuned_lora_adapters_to_LlavaLlamaForCausalLM_model(
     model: llava.model.LlavaLlamaForCausalLM,
     radialog_lora_weights_path: str,
-) -> peft.PeftModel:
+) -> peft.PeftModelForCausalLM:
 
     is_model_quantized: bool = any(
         isinstance(m, bitsandbytes.nn.Linear4bit) for m in model.modules()
@@ -69,7 +69,7 @@ def add_finetuned_lora_adapters_to_LlavaLlamaForCausalLM_model(
 
     lora_config = _get_lora_config()
     print("Adding LoRA adapters to the model...")
-    lora_model = peft.get_peft_model(model, lora_config)
+    lora_model = t.cast(peft.PeftModelForCausalLM, peft.get_peft_model(model, lora_config))
     radialog_mapped_lora_state_dict = _load_lora_weights_in_state_dict_format_for_radialog(
         lora_weights_path=radialog_lora_weights_path, is_target_model_with_value_head=False
     )

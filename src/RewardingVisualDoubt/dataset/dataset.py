@@ -5,12 +5,12 @@ import numpy as np
 import pandas as pd
 import torch
 import transformers
-
 from PIL import Image
 from torch.utils.data import Dataset as TorchDataset
+
 from RewardingVisualDoubt import shared
 
-from . import domain, interfacing, mimic_cxr, sampling, preprocessing
+from . import domain, interfacing, mimic_cxr, preprocessing, sampling
 
 biovil_image_transformer = shared.create_chest_xray_transform_for_inference(
     512, center_crop_size=448
@@ -75,7 +75,9 @@ class MimicCxrLlavaModelInputBatchDict(t.TypedDict):
     batch_attention_mask: torch.Tensor
     batch_labels: torch.Tensor | list[bool] | list[None]
     batch_prompts: list[str]
-    batch_mimic_cxr_datapoint_metadata: list[mimic_cxr.MimicCxrBinaryQADatapoint]
+    batch_mimic_cxr_datapoint_metadata: list[
+        mimic_cxr.MimicCxrBinaryQADatapoint | mimic_cxr.MimicCxrDatapoint
+    ]
 
 
 class MimicCxrLlavaModelInputBatchDictForSFT(MimicCxrLlavaModelInputBatchDict):

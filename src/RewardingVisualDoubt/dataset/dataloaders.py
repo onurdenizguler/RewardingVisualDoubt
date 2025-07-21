@@ -1,10 +1,9 @@
 import typing as t
 
 import transformers
-
 from torch.utils.data import DataLoader
 
-from . import dataset, collation
+from . import collation, dataset
 
 ######################## GET DATALOADERS ########################
 

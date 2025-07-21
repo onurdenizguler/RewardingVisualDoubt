@@ -26,7 +26,7 @@ def shortcut_load_radialog_binary_qa_sft_model() -> shared.llava.LlavaLlamaForCa
     )
 
 
-def shortcut_load_the_original_radialog_model() -> peft.PeftModel:
+def shortcut_load_the_original_radialog_model() -> peft.PeftModelForCausalLM:
     return vllm.load_pretrained_llava_model_for_sft_training(
         device_str=(
             shared.torch_devices.cuda.value

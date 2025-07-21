@@ -1,9 +1,7 @@
 import transformers
-from LLAVA_Biovil.llava.constants import (
-    DEFAULT_IM_END_TOKEN,
-    DEFAULT_IM_START_TOKEN,
-    DEFAULT_IMAGE_PATCH_TOKEN,
-)
+from LLAVA_Biovil.llava.constants import (DEFAULT_IM_END_TOKEN,
+                                          DEFAULT_IM_START_TOKEN,
+                                          DEFAULT_IMAGE_PATCH_TOKEN)
 
 LLAVA_BASE_MODEL_NAME = "liuhaotian/llava-v1.5-7b"
 
