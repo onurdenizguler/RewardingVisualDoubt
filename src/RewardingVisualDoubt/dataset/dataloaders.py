@@ -32,7 +32,10 @@ def get_mimic_cxr_llava_model_input_dataloader(
 
 
 def get_mimic_cxr_llava_model_input_dataloader_for_sft(
-    dataset: dataset.BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT,
+    dataset: (
+        dataset.BinaryQAPromptedMimicCxrLlavaModelInputDatasetForSFT
+        | dataset.ReportGenerationPromptedMimicCxrLlavaModelInputDatasetForSFT
+    ),
     batch_size: int,
     padding_tokenizer: transformers.PreTrainedTokenizer,
     num_workers: t.Optional[int] = None,

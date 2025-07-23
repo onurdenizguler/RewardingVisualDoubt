@@ -54,6 +54,12 @@ class ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDict(t.TypedDict):
     mimic_cxr_datapoint_metadata: mimic_cxr.MimicCxrDatapoint
 
 
+class ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDictForSFT(
+    ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDict
+):
+    expected_output_ids: torch.Tensor
+
+
 class BinaryQAPromptedMimicCxrLlavaModelInputDatapointDict(t.TypedDict):
     llava_model_input_dict: LlavaModelInputDict
     label: bool | None
@@ -123,7 +129,7 @@ def _create_llava_model_input_from_mimic_cxr_datapoint(
     if isinstance(datapoint, mimic_cxr.MimicCxrBinaryQADatapoint):
         text_input = preprocessing.create_prompt_for_binary_qa(prompter, datapoint)
     elif isinstance(datapoint, mimic_cxr.MimicCxrDatapoint):
-        text_input = preprocessing.create_prompt(prompter, datapoint.disease_labels)
+        text_input = preprocessing.create_report_generation_prompt(prompter, datapoint)
     else:
         exception_message = (
             "datapoint must be an instance of either MimicCxrDatapoint or MimicCxrBinaryQADatapoint"
@@ -156,7 +162,6 @@ class ReportGenerationPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
     prompter: t.Callable[[str], str]
     image_transform: t.Callable[[Image.Image], torch.Tensor] = biovil_image_transformer
     split: domain.DatasetSplit = domain.DatasetSplit.TRAIN
-    supports_label: bool = False
 
     def __post_init__(self):
         self.df = self.mimic_cxr_df[self.mimic_cxr_df["split"] == self.split.value]
@@ -164,21 +169,17 @@ class ReportGenerationPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
     def __len__(self):
         return len(self.df)
 
-    def __getitem__(self, idx: int) -> ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDict:
-
+    def _prepare_report_generation_prompted_mimic_cxr_llave_model_input_datapoint_dict(
+        self, idx: int
+    ) -> ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDict:
         row = self.df.iloc[idx]
         mimic_cxr_datapoint = mimic_cxr.create_mimic_cxr_datapoint_from_mimic_cxr_dataset_df_row(
             row
         )
-        prompt = preprocessing.create_prompt(self.prompter, mimic_cxr_datapoint.disease_labels)
+        prompt = preprocessing.create_report_generation_prompt(self.prompter, mimic_cxr_datapoint)
         llava_model_input = _create_llava_model_input_from_mimic_cxr_datapoint(
             mimic_cxr_datapoint, self.tokenizer, self.prompter, self.image_transform
         )
-
-        assert (
-            not self.supports_label
-        ), "ReportGenerationPromptedMimicCxrLlavaModelInputDataset does not support labels at this time."
-
         label = None
 
         return ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDict(
@@ -186,6 +187,33 @@ class ReportGenerationPromptedMimicCxrLlavaModelInputDataset(TorchDataset):
             label=label,
             prompt=prompt,
             mimic_cxr_datapoint_metadata=mimic_cxr_datapoint,
+        )
+
+    def __getitem__(self, idx: int) -> ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDict:
+        return self._prepare_report_generation_prompted_mimic_cxr_llave_model_input_datapoint_dict(
+            idx
+        )
+
+
+@dataclass
+class ReportGenerationPromptedMimicCxrLlavaModelInputDatasetForSFT(
+    ReportGenerationPromptedMimicCxrLlavaModelInputDataset
+):
+    """
+    This dataset is used for training a model to generate reports given a chest x-ray image and provide the confidence score right after the generated report.
+    """
+
+    def __getitem__(
+        self, idx: int
+    ) -> ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDictForSFT:
+        datapoint_dict = (
+            self._prepare_report_generation_prompted_mimic_cxr_llave_model_input_datapoint_dict(idx)
+        )
+        expected_output_ids = preprocessing.replace_confidence_score_tokens_with_value(
+            datapoint_dict["llava_model_input_dict"]["text_prompt_input_ids"],
+        )
+        return ReportGenerationPromptedMimicCxrLlavaModelInputDatapointDictForSFT(
+            **datapoint_dict, expected_output_ids=expected_output_ids
         )
 
 
@@ -202,7 +230,22 @@ def get_report_generation_prompted_mimic_cxr_llava_model_input_dataset(
         prompter=prompter,
         image_transform=biovil_image_transformer,
         split=split,
-        supports_label=False,
+    )
+
+
+def get_report_generation_prompted_mimic_cxr_llava_model_input_dataset_for_sft(
+    split: domain.DatasetSplit,
+    tokenizer: transformers.PreTrainedTokenizer,
+    prompter: t.Callable[..., str],
+) -> ReportGenerationPromptedMimicCxrLlavaModelInputDatasetForSFT:
+    return ReportGenerationPromptedMimicCxrLlavaModelInputDatasetForSFT(
+        mimic_cxr_df=sampling.remove_samples_with_missing_reports(
+            mimic_cxr.create_mimic_cxr_dataset_df()
+        ),
+        tokenizer=tokenizer,
+        prompter=prompter,
+        image_transform=biovil_image_transformer,
+        split=split,
     )
 
 

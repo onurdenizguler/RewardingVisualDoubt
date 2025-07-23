@@ -9,13 +9,22 @@ from RewardingVisualDoubt import shared
 from . import mimic_cxr
 
 
-def create_prompt(
-    prompter: t.Callable[[str], str],
-    disease_labels: t.List[mimic_cxr.ChexpertFinding],
+def create_report_generation_prompt(
+    report_generation_prompter: t.Callable[..., str],
+    datapoint: mimic_cxr.MimicCxrDatapoint,
+    **kwargs
 ) -> str:
-    findings_string = mimic_cxr.convert_binary_chexpert_findings_to_string(disease_labels)
-    text_input = prompter(findings_string)
-    return text_input
+
+    prompter_params = inspect.signature(report_generation_prompter).parameters
+    possible_inputs = {
+        "findings": mimic_cxr.convert_binary_chexpert_findings_to_string(datapoint.disease_labels),
+        "possible_confidences": shared.POSSIBLE_CONFIDENCES,
+        "gt_report": datapoint.report,
+        **kwargs,
+    }
+    filtered_args = {k: v for k, v in possible_inputs.items() if k in prompter_params}
+
+    return report_generation_prompter(**filtered_args)
 
 
 def create_prompt_for_binary_qa(
