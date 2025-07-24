@@ -3,6 +3,17 @@ DEFAULT_RADIALOG_SYSTEM_MESSAGE = (
     "The assistant gives professional, detailed, and polite answers to the user's questions."
 )
 
+
+REPORT_GENERATION_INITIAL_INSTRUCTION = (
+    "<image>. Predicted Findings: {findings}. You are to act as a radiologist and write "
+    "the finding section of a chest x-ray radiology report for this X-ray image and the given predicted findings. "
+    "Write in the style of a radiologist, write one fluent text without enumeration, "
+    "be concise and don't provide explanations or reasons."
+)
+
+
+### LLM as Judge Prompts
+
 FACT_CHECKING_INITIAL_INSTRUCTION = (
     "You are to act as a radiologist and check a claim your medical student has written"
     "against the ground truth report. Carefully read the ground truth report and then"
@@ -13,12 +24,8 @@ FACT_CHECKING_INITIAL_INSTRUCTION = (
     "Student's sentence: {generated_sentence} "
 )
 
-REPORT_GENERATION_INITIAL_INSTRUCTION = (
-    "<image>. Predicted Findings: {findings}. You are to act as a radiologist and write"
-    "the finding section of a chest x-ray radiology report for this X-ray image and the given predicted findings. "
-    "Write in the style of a radiologist, write one fluent text without enumeration, "
-    "be concise and don't provide explanations or reasons."
-)
+
+### Binary QA Prompts
 
 BINARY_QA_INITIAL_INSTRUCTION = (
     "<image>. You are to act as a radiologist and answer the following question: "
@@ -47,6 +54,46 @@ BINARY_QA_INITIAL_INSTRUCTION_WITH_CONFIDENCE_REQUEST = (
     + "Is the following disease visible in the given X-ray image: {chexpert_finding_str}, and how confident are you? "
 )
 
+BINARY_QA_USER_QUESTION_OPTIONS = [
+    ("Is there evidence of {finding} in the image?"),
+    ("Is there any {finding}?"),
+    ("Is any {finding} evident in the report?"),
+    ("Is there any indication of {finding} in the report?"),
+    ("Does the report mention  {finding}?"),
+    ("Does the patient have {finding}?"),
+    ("Is there any sign of  {finding} in the report?"),
+]
+
+BINARY_QA_ASSISTANT_RESPONSE_WITH_CONFIDENCE = (
+    'Yes, the disease is visible in the X-ray image. {{"confidence": {confidence_score} }}'
+)
+
+BINARY_QA_POSTIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS = [
+    ('Yes, the image shows {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, the patient has {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, there is evidence of that in the image. {{"confidence": {confidence_score} }}'),
+    ('Yes, indications of {finding} are present. {{"confidence": {confidence_score}}}'),
+    ('Yes, the image findings align with {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, the image suggests {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, {finding} is visible. {{"confidence": {confidence_score}}}'),
+    ('Yes, the observed characteristics match {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, the image presents signs of {finding}. {{"confidence": {confidence_score}}}'),
+    ('Yes, the diagnostic markers indicate {finding}. {{"confidence": {confidence_score}}}'),
+]
+
+BINARY_QA_NEGATIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS = [
+    ('No, the image shows no {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, there is no evidence of that in the image. {{"confidence": {confidence_score}}}'),
+    ('No, the patient does not have {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, the image does not show {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, there are no indications of {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, {finding} is not observed in the image. {{"confidence": {confidence_score}}}'),
+    ('No, the image does not indicate {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, there is no detectable evidence of {finding}. {{"confidence": {confidence_score}}}'),
+    ('No, the image does not provide signs of {finding}. {{"confidence": {confidence_score}}}'),
+]
+
+### Post-Generation Confidence Request Prompts
 
 POST_GENERATION_USER_CONFIDENCE_REQUEST = (
     "Now evaluate your own response. How confident are you in your answer? "
@@ -59,11 +106,6 @@ POST_GENERATION_ASSISTANT_CONFIDENCE_COMPLIANCE = (
     "When asked how confident I am about a response, I consistently provide it in a JSON object, adhering to my policy."
     "The confidence JSON follows this structure: {'confidence': int}."
     "Here's my confidence JSON about my last response: "
-)
-
-
-BINARY_QA_ASSISTANT_RESPONSE_WITH_CONFIDENCE = (
-    'Yes, the disease is visible in the X-ray image. {{"confidence": {confidence_score} }}'
 )
 
 POST_GENERATION_USER_CONFIDENCE_REQUEST_OPTIONS = [
@@ -122,41 +164,4 @@ POST_GENERATION_USER_CONFIDENCE_REQUEST_OPTIONS = [
         "Rate your confidence from 0 to 10, where 0 reflects low certainty and 10 reflects high certainty."
         "Lower numbers show more doubt, while higher numbers show more confidence in your answer."
     ),
-]
-
-
-BINARY_QA_USER_QUESTION_OPTIONS = [
-    ("Is there evidence of {finding} in the image?"),
-    ("Is there any {finding}?"),
-    ("Is any {finding} evident in the report?"),
-    ("Is there any indication of {finding} in the report?"),
-    ("Does the report mention  {finding}?"),
-    ("Does the patient have {finding}?"),
-    ("Is there any sign of  {finding} in the report?"),
-]
-
-
-BINARY_QA_POSTIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS = [
-    ('Yes, the image shows {finding}. {{"confidence": {confidence_score}}}'),
-    ('Yes, the patient has {finding}. {{"confidence": {confidence_score}}}'),
-    ('Yes, there is evidence of that in the image. {{"confidence": {confidence_score} }}'),
-    ('Yes, indications of {finding} are present. {{"confidence": {confidence_score}}}'),
-    ('Yes, the image findings align with {finding}. {{"confidence": {confidence_score}}}'),
-    ('Yes, the image suggests {finding}. {{"confidence": {confidence_score}}}'),
-    ('Yes, {finding} is visible. {{"confidence": {confidence_score}}}'),
-    ('Yes, the observed characteristics match {finding}. {{"confidence": {confidence_score}}}'),
-    ('Yes, the image presents signs of {finding}. {{"confidence": {confidence_score}}}'),
-    ('Yes, the diagnostic markers indicate {finding}. {{"confidence": {confidence_score}}}'),
-]
-
-BINARY_QA_NEGATIVE_ASSISTANT_RESPONSE_WITH_CONFIDENCE_OPTIONS = [
-    ('No, the image shows no {finding}. {{"confidence": {confidence_score}}}'),
-    ('No, there is no evidence of that in the image. {{"confidence": {confidence_score}}}'),
-    ('No, the patient does not have {finding}. {{"confidence": {confidence_score}}}'),
-    ('No, the image does not show {finding}. {{"confidence": {confidence_score}}}'),
-    ('No, there are no indications of {finding}. {{"confidence": {confidence_score}}}'),
-    ('No, {finding} is not observed in the image. {{"confidence": {confidence_score}}}'),
-    ('No, the image does not indicate {finding}. {{"confidence": {confidence_score}}}'),
-    ('No, there is no detectable evidence of {finding}. {{"confidence": {confidence_score}}}'),
-    ('No, the image does not provide signs of {finding}. {{"confidence": {confidence_score}}}'),
 ]

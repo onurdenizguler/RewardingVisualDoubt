@@ -1,3 +1,4 @@
+import datetime
 import typing as t
 
 import torch
@@ -151,3 +152,29 @@ def log_custom_metrics_for_binary_qa(
     ].count(True) / len(accumulating_game_logs["is_confidence_randomly_replaced"])
 
     return table_rows
+
+
+def get_wandb_parameters_for_sft(
+    learning_rate: float,
+    prompter: t.Callable,
+    num_epochs: int,
+    steps_until_checkpoint: int,
+    gradient_accumulation_steps: int,
+    batch_size: int,
+    num_batches_to_evaluate: int,
+    n_training_batches_to_skip: int,
+) -> t.Dict[str, t.Any]:
+    return {
+        "id": f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(learning_rate, '.0e')}",
+        "config": {
+            "date_of_training": datetime.datetime.now().strftime("%Y-%m-%d"),
+            "learning_rate": learning_rate,
+            "prompter": prompter.__name__,
+            "num_epochs": num_epochs,
+            "steps_until_checkpoint": steps_until_checkpoint,
+            "batch_size": batch_size,
+            "gradient_accumulation_steps": gradient_accumulation_steps,
+            "num_batches_to_evaluate": num_batches_to_evaluate,
+            "n_training_batches_to_skip": n_training_batches_to_skip,
+        },
+    }

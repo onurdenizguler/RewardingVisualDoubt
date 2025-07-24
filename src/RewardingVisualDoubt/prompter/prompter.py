@@ -154,8 +154,36 @@ def build_report_generation_instruction_from_findings(findings: str) -> str:
     return _convert_conversation_into_prompt(conversation)
 
 
-def build_report_generation_prompt_with_response_and_confidence_for_sft():
-    pass
+def build_report_generation_prompt_with_response_and_confidence_for_sft(
+    findings: str,
+    possible_confidences: list[int],
+    gt_report: str,
+    is_for_inference: bool = False,
+) -> str:
+
+    conversation = _get_vicuna_conversation()
+
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(
+            role=Role.USER,
+            text=prompts.REPORT_GENERATION_INITIAL_INSTRUCTION.format(findings=findings),
+        ),
+    )
+
+    if is_for_inference:
+        assistant_response = None
+    else:
+        response_template = gt_report + ' {{"confidence": {confidence_score}}}'
+        assistant_response = response_template.format(
+            confidence_score=random.choice(possible_confidences)
+        )
+
+    _add_message_to_conversation(
+        conversation=conversation,
+        message=Message(role=Role.ASSISTANT, text=assistant_response),
+    )
+    return _convert_conversation_into_prompt(conversation)
 
 
 #### Binary q&a requests
