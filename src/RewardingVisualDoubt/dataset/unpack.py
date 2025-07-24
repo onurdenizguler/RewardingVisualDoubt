@@ -93,6 +93,7 @@ def unpack_report_generation_batch_with_attention_mask_and_metadata(
 
     return input_ids, images, stopping_criteria, attention_mask, batch_metadata_list
 
+
 def unpack_report_generation_batch_with_attention_mask_and_metadata_for_sft(
     device: torch.device | str,
     tokenizer: transformers.PreTrainedTokenizer,
@@ -126,4 +127,3 @@ def unpack_report_generation_batch_with_attention_mask_and_metadata_for_sft(
         print("(input_ids == labels) | (labels == -100) verification failed.")
 
     return input_ids, images, labels, attention_mask, batch_metadata_list
-)

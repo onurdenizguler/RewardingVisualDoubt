@@ -106,7 +106,7 @@ def sync_apply_chat_template(
 
 
 def sync_fetch_completion(
-    prompt: str,
+    prompt: str | list[str],
     n_predict: int = 2048,
     do_sample: bool = False,
     temperature: float | None = None,

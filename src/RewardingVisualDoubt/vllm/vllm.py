@@ -27,6 +27,7 @@ class RadialogLoraWeightsPath(enum.Enum):
         "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/RaDialog_adapter_model.bin"
     )
     BINARY_QA_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_with_confidence_sft_resulting_adapter.pth/adapter_model.bin"
+    REPORT_GENERATION_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_sft_training/2025-07-24/best_eval_model_epoch_1_step_50/adapter_model.bin"
 
 
 class RadialogMergedLlavaModelPath(enum.Enum):

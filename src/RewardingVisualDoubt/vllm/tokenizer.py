@@ -40,6 +40,8 @@ def load_pretrained_llava_tokenizer_with_image_support(
     assert isinstance(tokenizer, transformers.LlamaTokenizer)
     tokenizer = _modify_tokenizer_for_image_input(tokenizer)
     tokenizer.pad_token_id = tokenizer.eos_token_id
-    if for_use_in_padding:
-        tokenizer.padding_side = "left"
+    tokenizer.padding_side = "left"
+    # TODO: retire this logic
+    # if for_use_in_padding:
+    #     tokenizer.padding_side = "left"
     return tokenizer

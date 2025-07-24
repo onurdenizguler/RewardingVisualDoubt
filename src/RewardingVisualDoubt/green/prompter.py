@@ -14,7 +14,7 @@ GREEN_CHAT_TEMPLATE = (
 )
 
 
-def make_prompt(text1, text2, max_len=300):
+def make_prompt(reference_report: str, candidate_report: str, max_len=650):
     """
     Creates a prompt for evaluating the accuracy of a candidate radiology report in comparison to a reference radiology report.
 
@@ -25,8 +25,8 @@ def make_prompt(text1, text2, max_len=300):
     Returns:
         str: Formatted prompt string.
     """
-    text1 = " ".join(text1.split()[:max_len])
-    text2 = " ".join(text2.split()[:max_len])
+    text1 = " ".join(reference_report.split()[:max_len])
+    text2 = " ".join(candidate_report.split()[:max_len])
     prompt = (
         f"Objective: Evaluate the accuracy of a candidate radiology report in comparison "
         f"to a reference radiology report composed by expert radiologists.\n\n "
