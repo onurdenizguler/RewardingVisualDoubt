@@ -1,13 +1,23 @@
-# %%
 import enum
 import typing as t
 
-from LLAVA_Biovil.llava.mm_utils import KeywordsStoppingCriteria
+import torch
+from LLAVA_Biovil import llava
+###### IMPORTS FROM THE RADIALOG/LLAVA REPOSITORY ######
+from LLAVA_Biovil.llava.mm_utils import (KeywordsStoppingCriteria,
+                                         tokenizer_image_token)
+from utils import create_chest_xray_transform_for_inference, remap_to_uint8
 
 
 class torch_devices(enum.Enum):
     cuda = "cuda"
     cpu = "cpu"
+
+
+def get_device_and_device_str() -> tuple[torch.device, str]:
+    device_str = torch_devices.cuda.value if torch.cuda.is_available() else torch_devices.cpu.value
+    device = torch.device(device_str)
+    return device, device_str
 
 
 POSSIBLE_CONFIDENCES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]

@@ -9,7 +9,6 @@ import peft
 import torch
 import transformers
 import trl
-from LLAVA_Biovil import llava
 
 from RewardingVisualDoubt import shared
 
@@ -28,6 +27,7 @@ class RadialogLoraWeightsPath(enum.Enum):
         "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/RaDialog_adapter_model.bin"
     )
     BINARY_QA_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_with_confidence_sft_resulting_adapter.pth/adapter_model.bin"
+    REPORT_GENERATION_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_sft_training/2025-07-24/best_eval_model_epoch_1_step_50/adapter_model.bin"
 
 
 class RadialogMergedLlavaModelPath(enum.Enum):
@@ -70,7 +70,7 @@ def _resolve_model_configuration(
     return kwargs
 
 
-def _get_finetuned_llava_config(model_path: Path) -> llava.model.LlavaConfig:
+def _get_finetuned_llava_config(model_path: Path) -> shared.llava.model.LlavaConfig:
     return transformers.AutoConfig.from_pretrained(model_path)
 
 
@@ -78,16 +78,16 @@ def _get_finetuned_llava_config(model_path: Path) -> llava.model.LlavaConfig:
 
 
 def _freeze_all_params(
-    model: llava.model.LlavaLlamaForCausalLM,
-) -> llava.model.LlavaLlamaForCausalLM:
+    model: shared.llava.model.LlavaLlamaForCausalLM,
+) -> shared.llava.model.LlavaLlamaForCausalLM:
     for param in model.parameters():
         param.requires_grad = False
     return model
 
 
 def _freeze_all_non_lora_params(
-    model: llava.model.LlavaLlamaForCausalLM,
-) -> llava.model.LlavaLlamaForCausalLM:
+    model: shared.llava.model.LlavaLlamaForCausalLM,
+) -> shared.llava.model.LlavaLlamaForCausalLM:
     for name, param in model.named_parameters():
         if "lora" not in name:
             param.requires_grad = False
@@ -113,10 +113,10 @@ def _read_non_lora_trainables(model_path: Path) -> dict:
 
 
 def _load_additional_non_lora_llava_weights(
-    model: llava.LlavaLlamaForCausalLM,
+    model: shared.llava.LlavaLlamaForCausalLM,
     model_path: Path,
     skip_vision_related_weights: bool = False,
-) -> llava.LlavaLlamaForCausalLM:
+) -> shared.llava.LlavaLlamaForCausalLM:
 
     print("Loading additional LLaVA weights...")
     non_lora_trainables = _read_non_lora_trainables(model_path)
@@ -135,12 +135,12 @@ def _load_additional_non_lora_llava_weights(
 
 def _load_base_LlavaLamaForCausalLM_model(
     model_base: str | Path, model_path: Path, **kwargs
-) -> llava.model.LlavaLlamaForCausalLM:
+) -> shared.llava.model.LlavaLlamaForCausalLM:
 
     print(f"Loading LLaVA from base {model_base}")
     model = t.cast(
         transformers.LlamaForCausalLM,
-        llava.model.LlavaLlamaForCausalLM.from_pretrained(
+        shared.llava.model.LlavaLlamaForCausalLM.from_pretrained(
             pretrained_model_name_or_path=model_base,
             low_cpu_mem_usage=True,
             config=_get_finetuned_llava_config(model_path=model_path),
@@ -157,7 +157,7 @@ def _load_base_LlavaLamaForCausalLM_model(
             torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype)
         )
 
-    return t.cast(llava.model.LlavaLlamaForCausalLM, model)
+    return t.cast(shared.llava.model.LlavaLlamaForCausalLM, model)
 
 
 def load_baseline_llava_model_with_vision_modules(
@@ -166,7 +166,7 @@ def load_baseline_llava_model_with_vision_modules(
     device: str = shared.torch_devices.cuda.value,
     precision: Precision = "16bit",
     **kwargs,
-) -> llava.model.LlavaLlamaForCausalLM:
+) -> shared.llava.model.LlavaLlamaForCausalLM:
     """
     Load the baseline LLaVA model with the vision modules finetuned for RaDialog.
     We do not load any LLM LoRA adapters here due to pecularities with the loading logic.
@@ -221,7 +221,7 @@ def load_pretrained_llava_model_for_sft_training(
     device_str: str = shared.torch_devices.cuda.value,
     precision: Precision = "16bit",
     radialog_lora_weights_path: str = RadialogLoraWeightsPath.ORIGINAL.value,
-) -> peft.PeftModel:
+) -> peft.PeftModelForCausalLM:
     print(
         f"Adding LoRA adapters to the model for SFT training or inference from Radialog Lora Weights path: {radialog_lora_weights_path}"
     )

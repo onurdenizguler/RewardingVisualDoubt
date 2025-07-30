@@ -323,14 +323,13 @@ def train(
                 # Save the best performing model
                 if not perform_validation_before_starting_training:
                     if mean_eval_score > best_eval_score:
-                        save_dir = os.path.join(
+                        training.save_best_eval_lora_adapters_and_value_head_to_dir(
+                            ppo_trainer,
+                            epoch,
+                            step,
                             out_dir,
                             name_of_fine_tuning,
-                            datetime.datetime.now().strftime("%Y-%m-%d"),
-                            "best_eval_model",
                         )
-                        os.makedirs(save_dir, exist_ok=True)
-                        ppo_trainer.save_pretrained(save_dir)
                         best_eval_score = mean_eval_score
 
                 perform_validation_before_starting_training = False

@@ -3,7 +3,23 @@ import os
 
 import pandas as pd
 
-from . import mimic_cxr, domain
+from . import domain, mimic_cxr
+
+################# REPORTY GENERATION SAMPLING METHODS #################
+
+
+def remove_samples_with_missing_reports(
+    df: pd.DataFrame,
+    shuffle: bool = True,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    df = df[~df["findings"].isna()]
+    if shuffle:
+        df = df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+    return df
+
+
+################# BINARY Q&A SAMPLING METHODS #################
 
 
 class SamplingMethod(enum.Enum):
@@ -109,7 +125,7 @@ def sample_balanced_per_disease(
 
     balanced_df = pd.concat(sampled_df_list).reset_index(drop=True)
     if shuffle:
-        balanced_df = balanced_df.sample(frac=1, random_state=42).reset_index(drop=True)
+        balanced_df = balanced_df.sample(frac=1, random_state=random_state).reset_index(drop=True)
     return balanced_df
 
 

@@ -64,6 +64,5 @@ def merge_llm_with_vision_tower(
             elif "model.vision_tower" in k:  # biovil
                 new_k = k.replace("model.vision_tower.", "")
                 new_vision_tower_state_dict[new_k] = v
-        print("Loaded additional vision tower weights...")
         vision_tower.load_state_dict(new_vision_tower_state_dict, strict=False)
     return model

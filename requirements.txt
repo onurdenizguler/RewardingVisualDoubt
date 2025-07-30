@@ -9,14 +9,18 @@ chardet==5.2.0
 scikit-learn==1.2.2
 sentencepiece==0.1.99 # RaDialog prefers 0.1.99 but usloth 2024.8 requires >0.2.0
 numpy==1.26.4
-openpyxl==-3.1.5
+openpyxl==3.1.5
 trl==0.5.0 # Should be ok to use ( 0.11.0 is the one that introduces a lot more changes, and paul probably uses 0.8.0)
 ipykernel==6.29.5
 ipywidgets==8.1.5
-pytest
-seaborn
+pytest==8.3.4
+seaborn==0.13.2
 bitsandbytes==0.41.0
-wandb
+wandb==0.19.7
+sentence-transformers==2.2.2
+# streamlit==1.46.1
+# protobuf==3.20.1
+# sentence-transformers==2.2.2 #required by green
 #unsloth[colab-new] @ git+https://github.com/ChantalMP/unsloth.git # ver 2024.8
 
 # INSTALLED THROUGH CONDA CHANNELS
@@ -26,5 +30,4 @@ wandb
 # pytorch-cuda=11.7 
 
 # LOCAL DEPENDENCY: radialog package
-
 # LOCAL PACKAGE TO BE CREATED: RewardingVisualDoubt (pip install -e . --config-settings editable_mode=compat)
