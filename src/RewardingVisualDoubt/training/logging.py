@@ -178,3 +178,47 @@ def get_wandb_parameters_for_sft(
             "n_training_batches_to_skip": n_training_batches_to_skip,
         },
     }
+
+
+def get_wandb_parameters_for_report_generation_ppo(
+    learning_rate: float,
+    chance_to_change_confidence: float,
+    reward_scale: float,
+    reward_function: t.Callable,
+    prompter: t.Callable,
+    granular_confidence: bool,
+    selected_llava_model_path: str,
+    adapter_path: str,
+    perform_validation_before_starting_training: bool,
+    mini_batch_size: int,
+    num_epochs: int,
+    steps_until_checkpoint: int,
+    gradient_accumulation_steps: int,
+    batch_size: int,
+    num_batches_to_evaluate: int,
+    n_training_batches_to_skip: int,
+) -> t.Dict[str, t.Any]:
+    return {
+        "id": f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(learning_rate, '.0e')}_{chance_to_change_confidence}_{reward_scale}",
+        "config": {
+            "date_of_training": datetime.datetime.now().strftime("%Y-%m-%d"),
+            "learning_rate": learning_rate,
+            "chance_to_change_confidence": chance_to_change_confidence,
+            "reward_function": reward_function.__name__,
+            "reward_scale": reward_scale,
+            "prompter": prompter.__name__,
+            "granular_confidence": str(granular_confidence),
+            "starting_llava_model_path": selected_llava_model_path,
+            "starting_adapter_path": adapter_path,
+            "num_epochs": num_epochs,
+            "perform_validation_before_starting_training": str(
+                perform_validation_before_starting_training
+            ),
+            "steps_until_checkpoint": steps_until_checkpoint,
+            "batch_size": batch_size,
+            "mini_batch_size": mini_batch_size,
+            "gradient_accumulation_steps": gradient_accumulation_steps,
+            "num_batches_to_evaluate": num_batches_to_evaluate,
+            "n_training_batches_to_skip": n_training_batches_to_skip,
+        },
+    }
