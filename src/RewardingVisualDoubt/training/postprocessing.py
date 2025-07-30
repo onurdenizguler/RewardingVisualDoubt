@@ -64,8 +64,11 @@ def replace_image_token_with_another_token(
     prediction: torch.Tensor,
     image_token_id: int = shared.LLAVA_IMAGE_TOKEN_INDEX,
     replacement_token_id: int = TOKEN_INDEX_OF_THE_WORD_IMAGE,
+    by_cloning: bool = False,
 ) -> torch.Tensor:
     # TODO: Consider adding the special image token to tokenizer for future editions
+    if by_cloning:
+        prediction = prediction.clone()
     prediction[prediction == image_token_id] = replacement_token_id
     return prediction
 
@@ -74,9 +77,10 @@ def replace_image_token_with_another_token_for_list_of_tensors(
     predictions: list[torch.Tensor],
     image_token_id: int = shared.LLAVA_IMAGE_TOKEN_INDEX,
     replacement_token_id: int = TOKEN_INDEX_OF_THE_WORD_IMAGE,
+    by_cloning: bool = False,
 ) -> list[torch.Tensor]:
     return [
-        replace_image_token_with_another_token(p, image_token_id, replacement_token_id)
+        replace_image_token_with_another_token(p, image_token_id, replacement_token_id, by_cloning)
         for p in predictions
     ]
 
