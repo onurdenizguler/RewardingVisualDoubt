@@ -16,3 +16,7 @@ cmake --build build --config Release -j
 ```bash
 /home/guests/deniz_gueler/repos/llama.cpp/build/bin/llama-server --model /home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radllama_gguf/GREEN-RadLlama2-7b.Q4_K_M.gguf --n-gpu-layers 999
 ```
+
+## Warning
+
+The build is very unlikely to work on a different device with different nvidia/CUDA environments and libraries as the build is very specific to the CUDA environment it was built in.
