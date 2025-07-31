@@ -2,13 +2,12 @@ import dataclasses
 import enum
 
 
-@dataclasses.dataclass
-class GreenDefaultGenerationParameters:
-    max_length: int = 2048
-    temperature: float = 0.0
-    top_p: float = 1.0
-    top_k: int = 0
-    do_sample: bool = False
+class GreenDefaultGenerationParameters(enum.Enum):
+    max_length = 2048
+    temperature = 0.0
+    top_p = 1.0
+    top_k = 0
+    do_sample = False
 
 
 class GreenModelNames(enum.Enum):
