@@ -1,0 +1,28 @@
+training_metaparameters:
+  name_of_fine_tuning: "radialog_report_generation_ppo_training"
+  llava_model_path: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_with_confidence_sft_full_merged_model"
+  adapter_path: null
+  out_dir: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models"
+  perform_validation_before_starting_training: false
+  n_training_batches_to_skip: 0
+  num_batches_to_evaluate: 0
+
+report_generation_ppo_hyperparameters:
+  num_epochs: 1
+  steps_until_checkpoint: 15
+  gradient_accumulation_steps: 3
+  batch_size: 12
+  mini_batch_size: 4
+  learning_rate: 1e-5
+  chance_to_change_confidence: 0.4
+  # Reward related hyperparameters might be overwritten in reward tuning process
+  reward_function: "RewardingVisualDoubt.reward.scaled_normalized_log_likelihood_reward"
+  reward_config:
+    scaling: "shifted"
+    eps: 1e-2
+    scale: 5.0
+    squash_scale: null
+  granular_confidence: false
+  max_steps: null
+  early_stopping_patience: null
+  early_stopping_min_improvement: null
