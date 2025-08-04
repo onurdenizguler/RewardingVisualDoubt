@@ -1,0 +1,67 @@
+import dataclasses
+import importlib
+import typing as t
+from pathlib import Path
+
+import yaml
+
+from RewardingVisualDoubt import reward
+
+
+@dataclasses.dataclass(frozen=True)
+class TrainingMetaParameters:
+    name_of_fine_tuning: str
+    llava_model_path: str
+    adapter_path: str | None
+    out_dir: Path
+    perform_validation_before_starting_training: bool
+    n_training_batches_to_skip: int
+    num_batches_to_evaluate: int
+
+
+@dataclasses.dataclass(frozen=True)
+class ReportGenerationPPOHyperparameters:
+    num_epochs: int
+    steps_until_checkpoint: int
+    gradient_accumulation_steps: int
+    batch_size: int
+    mini_batch_size: int
+    learning_rate: float
+    chance_to_change_confidence: float
+    reward_function: t.Callable
+    reward_config: reward.RewardConfig
+    granular_confidence: bool = False
+    max_steps: t.Optional[int] = None
+    early_stopping_patience: t.Optional[int] = None
+    early_stopping_min_improvement: float = 0.0
+
+
+def load_callable(path: str) -> t.Any:
+    """
+    Given a dotted path like "pkg.mod.func", import and return the function.
+    """
+    mod_path, func_name = path.rsplit(".", 1)
+    module = importlib.import_module(mod_path)
+    return getattr(module, func_name)
+
+
+def load_default_configs(
+    path: str,
+) -> tuple[TrainingMetaParameters, ReportGenerationPPOHyperparameters]:
+    data = yaml.safe_load(open(path, "r"))
+
+    tm = TrainingMetaParameters(
+        **{
+            **data["training_metaparameters"],
+            "out_dir": Path(data["training_metaparameters"]["out_dir"]),
+        }
+    )
+
+    # 3) Resolve reward_function string to callable
+    ppo_dict = data["report_generation_ppo_hyperparameters"].copy()
+    rf = ppo_dict["reward_function"]
+    if isinstance(rf, str):
+        ppo_dict["reward_function"] = load_callable(rf)
+
+    ppo = ReportGenerationPPOHyperparameters(**ppo_dict)
+    return tm, ppo
