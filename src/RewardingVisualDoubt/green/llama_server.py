@@ -5,7 +5,8 @@ import subprocess
 import psutil
 import requests
 
-from .shared import DEFAULT_RADLLAMA_GGUF_DIR, Quantization, create_radllama_model_filename
+from .shared import (DEFAULT_RADLLAMA_GGUF_DIR, Quantization,
+                     create_radllama_model_filename)
 
 LLAMA_SERVER_BIN = "/home/guests/deniz_gueler/repos/llama.cpp/build/bin/llama-server"
 PORT = 8080

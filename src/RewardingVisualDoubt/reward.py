@@ -1,6 +1,6 @@
+import dataclasses
 import math
 import typing as t
-import dataclasses
 
 from RewardingVisualDoubt import shared
 
