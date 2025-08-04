@@ -1,6 +1,7 @@
 import typing as t
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def compute_ece(avg_acc: list[float], counts: list[int]):
@@ -15,10 +16,10 @@ def compute_ece(avg_acc: list[float], counts: list[int]):
 
 def binify_accuracies(
     confidences: list[int | None],
-    is_answer_correct: list[bool],
+    accuracies: list[bool] | list[float | None],
 ) -> None | tuple[list[int], list[float]]:
 
-    filtered = [(c, a) for c, a in zip(confidences, is_answer_correct) if c is not None]
+    filtered = [(c, a) for c, a in zip(confidences, accuracies) if c is not None and a is not None]
     if not filtered:
         return None
     confidences_clean, accuracies_clean = t.cast(tuple[list[int], list[bool]], zip(*filtered))
@@ -78,3 +79,25 @@ def plot_calibration_curve(confidences: list[None | int], is_answer_correct: lis
 
     plt.close(fig)  # Prevent automatic display
     return fig
+
+
+def compute_confidence_distribution_metric(
+    confidences: list[float], num_bins: int = 11, eps: float = 1e-8
+) -> float:
+    """
+    A simple metric to quantify how far the model's predicted confidences
+    are from a uniform distribution (higher = more collapsed).
+    Here we use KL-divergence from uniform:
+        D_KL( P || U ) = sum P[i] * log(P[i] / (1/num_bins))
+    """
+
+    counts, _ = np.histogram(confidences, bins=num_bins, range=(0.0, 1.0), density=False)
+    total = counts.sum()
+    if total == 0:
+        return 0.0  # no data → treat as perfectly uniform
+
+    P = counts / total
+    U = np.ones_like(P) / num_bins
+
+    kl = float(np.sum(P * np.log((P + eps) / (U + eps))))
+    return kl
