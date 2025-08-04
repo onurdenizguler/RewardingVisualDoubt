@@ -7,7 +7,7 @@ import wandb
 
 from RewardingVisualDoubt import evaluation, shared
 
-from . import reinforcement
+from . import parameters, reinforcement
 
 
 def _handle_accumulating_game_logs_for_binary_qa(
@@ -119,11 +119,11 @@ def log_custom_metrics_for_binary_qa(
 
     bins_100 = evaluation.binify_accuracies(
         confidences=truncated_accumulating_game_logs["confidences"][-100:],
-        is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"][-100:],
+        accuracies=truncated_accumulating_game_logs["is_answer_correct"][-100:],
     )
     bins_500 = evaluation.binify_accuracies(
         confidences=truncated_accumulating_game_logs["confidences"],
-        is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
+        accuracies=truncated_accumulating_game_logs["is_answer_correct"],
     )
     if bins_100:
         counts_100, avg_acc_100 = bins_100
@@ -181,44 +181,35 @@ def get_wandb_parameters_for_sft(
 
 
 def get_wandb_parameters_for_report_generation_ppo(
-    learning_rate: float,
-    chance_to_change_confidence: float,
-    reward_scale: float,
-    reward_function: t.Callable,
+    metaparameters: parameters.TrainingMetaParameters,
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
     prompter: t.Callable,
-    granular_confidence: bool,
-    selected_llava_model_path: str,
-    adapter_path: str,
-    perform_validation_before_starting_training: bool,
-    mini_batch_size: int,
-    num_epochs: int,
-    steps_until_checkpoint: int,
-    gradient_accumulation_steps: int,
-    batch_size: int,
-    num_batches_to_evaluate: int,
-    n_training_batches_to_skip: int,
 ) -> t.Dict[str, t.Any]:
+
     return {
-        "id": f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(learning_rate, '.0e')}_{chance_to_change_confidence}_{reward_scale}",
+        "id": f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(hyperparameters.learning_rate, '.0e')}_{hyperparameters.chance_to_change_confidence}_{hyperparameters.reward_config.scaling}",
         "config": {
             "date_of_training": datetime.datetime.now().strftime("%Y-%m-%d"),
-            "learning_rate": learning_rate,
-            "chance_to_change_confidence": chance_to_change_confidence,
-            "reward_function": reward_function.__name__,
-            "reward_scale": reward_scale,
+            "learning_rate": hyperparameters.learning_rate,
+            "chance_to_change_confidence": hyperparameters.chance_to_change_confidence,
+            "reward_function": hyperparameters.reward_function.__name__,
+            "reward_scaling_method": hyperparameters.reward_config.scaling,
+            "reward_eps": hyperparameters.reward_config.eps,
+            "reward_scale": hyperparameters.reward_config.scale,
+            "reward_squash_scale": hyperparameters.reward_config.squash_scale,
+            "granular_confidence": str(hyperparameters.granular_confidence),
             "prompter": prompter.__name__,
-            "granular_confidence": str(granular_confidence),
-            "starting_llava_model_path": selected_llava_model_path,
-            "starting_adapter_path": adapter_path,
-            "num_epochs": num_epochs,
+            "starting_llava_model_path": metaparameters.llava_model_path,
+            "starting_adapter_path": metaparameters.adapter_path,
+            "num_epochs": hyperparameters.num_epochs,
             "perform_validation_before_starting_training": str(
-                perform_validation_before_starting_training
+                metaparameters.perform_validation_before_starting_training
             ),
-            "steps_until_checkpoint": steps_until_checkpoint,
-            "batch_size": batch_size,
-            "mini_batch_size": mini_batch_size,
-            "gradient_accumulation_steps": gradient_accumulation_steps,
-            "num_batches_to_evaluate": num_batches_to_evaluate,
-            "n_training_batches_to_skip": n_training_batches_to_skip,
+            "steps_until_checkpoint": hyperparameters.steps_until_checkpoint,
+            "batch_size": hyperparameters.batch_size,
+            "mini_batch_size": hyperparameters.mini_batch_size,
+            "gradient_accumulation_steps": hyperparameters.gradient_accumulation_steps,
+            "num_batches_to_evaluate": metaparameters.num_batches_to_evaluate,
+            "n_training_batches_to_skip": metaparameters.n_training_batches_to_skip,
         },
     }
