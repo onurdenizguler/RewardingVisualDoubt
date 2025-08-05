@@ -1,14 +1,29 @@
+import dataclasses
 import typing as t
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 
-def reward_ece_and_distribution_score_heuristic(
-    ece: float, conf_distribution_kl_divergence: float, avg_reward: float
-):
+@dataclasses.dataclass
+class RewardECEAndDistributionScore:
+    ece: float
+    conf_distribution_kl_divergence: float
+    avg_reward: float
 
-    return -ece - conf_distribution_kl_divergence
+
+def reward_ece_and_distribution_score_heuristic(
+    reward_ece_and_distribution_score: RewardECEAndDistributionScore,
+    alpha: float = 1.0,
+    beta: float = 1.0,
+    theta: float = 0.0,
+) -> float:
+
+    return (
+        -reward_ece_and_distribution_score.ece * alpha
+        - reward_ece_and_distribution_score.conf_distribution_kl_divergence * beta
+        + reward_ece_and_distribution_score.avg_reward * theta
+    )
 
 
 def compute_ece(avg_acc: list[float], counts: list[int]):
