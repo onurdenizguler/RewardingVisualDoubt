@@ -4,6 +4,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
+def reward_ece_and_distribution_score_heuristic(
+    ece: float, conf_distribution_kl_divergence: float, avg_reward: float
+):
+
+    return -ece - conf_distribution_kl_divergence
+
+
 def compute_ece(avg_acc: list[float], counts: list[int]):
     ece = 0.0
     for i, (acc, count) in enumerate(zip(avg_acc, counts)):
@@ -41,7 +48,9 @@ def binify_accuracies(
     return counts, avg_acc
 
 
-def plot_calibration_curve(confidences: list[None | int], is_answer_correct: list[bool]):
+def plot_calibration_curve(
+    confidences: list[None | int], accuracies: list[bool] | list[float | None]
+):
     """
     Generate a confidence calibration plot (reliability diagram).
 
@@ -53,7 +62,7 @@ def plot_calibration_curve(confidences: list[None | int], is_answer_correct: lis
         matplotlib.figure.Figure: The resulting plot as a matplotlib Figure.
     """
 
-    results = binify_accuracies(confidences, is_answer_correct)
+    results = binify_accuracies(confidences, accuracies)
     if not results:
         return
     counts, avg_acc = results
@@ -68,7 +77,7 @@ def plot_calibration_curve(confidences: list[None | int], is_answer_correct: lis
     ax.set_xlabel("Confidence Level (0–10)")
     ax.set_ylabel("Empirical Accuracy")
     ax.set_title(
-        f"Confidence Calibration Plot (Overall Accuracy: {sum(is_answer_correct)/len(is_answer_correct)})"
+        f"Confidence Calibration Plot (Overall Accuracy: {sum([accuracy for accuracy in accuracies if accuracy])/len(accuracies)})"
     )
     ax.grid(True)
     ax.legend()
