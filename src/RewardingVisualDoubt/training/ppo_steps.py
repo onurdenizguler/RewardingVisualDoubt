@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import random
 import typing as t
@@ -8,7 +9,7 @@ import trl
 
 from RewardingVisualDoubt import dataset, green, response, reward, shared
 
-from . import llava_ppo, logging, postprocessing, reinforcement
+from . import llava_ppo, logging, postprocessing
 
 ############### BINARY Q&A STEPS ###############
 
@@ -330,11 +331,9 @@ def radialog_report_generation_ppo_training_step(
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
     reward_function: t.Callable[..., float],
     reward_config: reward.RewardConfig,
-    accumulating_game_logs: logging.GameLogs | None = None,
     chance_to_change_confidence: float = 0.5,  # Default value: every 2nd batch
     granular_confidence: bool = False,
-    log_calibration_plot: bool = False,
-) -> tuple[list[torch.FloatTensor], list[int | None], list[float | None]]:
+) -> logging.ReportGenerationPostPPOOptimizationAssetsBatch:
 
     ######### 5.1 Unpack the batch #########
 
@@ -441,7 +440,17 @@ def radialog_report_generation_ppo_training_step(
         images=images,
     )
 
-    return scores, generated_confidence_values, green_scores
+    post_optimization_assets = create_post_ppo_optimization_assets(
+        generated_confidence_values=old_generated_confidence_values,
+        generated_confidence_values_after_replacement=generated_confidence_values,
+        is_confidence_randomly_replaced=is_confidence_randomly_replaced,
+        generated_texts=generated_texts,
+        ppo_responses=ppo_responses,
+        stats=stats,
+        scores=scores,
+        green_scores=green_scores,
+    )
+    return post_optimization_assets
 
 
 #####################################################################################################################
@@ -457,7 +466,7 @@ def handle_random_confidence_replacement(
     granular_confidence: bool,
 ) -> tuple[list[torch.Tensor], list[str], list[int | None], list[int | None], list[bool]]:
     old_generated_confidence_values = generated_confidence_values.copy()
-    generated_texts = reinforcement.overwrite_confidence(
+    generated_texts = postprocessing.overwrite_confidence(
         generated_texts, generated_confidence_values, granular_confidence=granular_confidence
     )
     generated_ids = []
@@ -477,6 +486,27 @@ def handle_random_confidence_replacement(
         old_generated_confidence_values,
         is_confidence_randomly_replaced,
     )
+
+
+def prepare_ppo_queries_and_responses_from_reformulated_query_and_responses(
+    reformulated_query_and_responses: list[postprocessing.ReformulatedQueryAndResponseDict],
+) -> tuple[list[torch.LongTensor], list[torch.LongTensor]]:
+
+    ppo_queries = t.cast(
+        list[torch.LongTensor],
+        [
+            reformulated_query_and_response["query_ids"]
+            for reformulated_query_and_response in reformulated_query_and_responses
+        ],
+    )
+    ppo_responses = t.cast(
+        list[torch.LongTensor],
+        [
+            reformulated_query_and_response["response_ids"]
+            for reformulated_query_and_response in reformulated_query_and_responses
+        ],
+    )
+    return ppo_queries, ppo_responses
 
 
 def create_post_report_generation_assets(
@@ -504,22 +534,24 @@ def create_post_report_generation_assets(
     )
 
 
-def prepare_ppo_queries_and_responses_from_reformulated_query_and_responses(
-    reformulated_query_and_responses: list[postprocessing.ReformulatedQueryAndResponseDict],
-) -> tuple[list[torch.LongTensor], list[torch.LongTensor]]:
+def create_post_ppo_optimization_assets(
+    generated_confidence_values: list[int | None],
+    generated_confidence_values_after_replacement: list[int | None],
+    is_confidence_randomly_replaced: list[bool],
+    generated_texts: list[str],
+    ppo_responses: list[torch.LongTensor],
+    stats: dict,
+    scores: list[torch.FloatTensor],
+    green_scores: list[float | None],
+) -> logging.ReportGenerationPostPPOOptimizationAssetsBatch:
 
-    ppo_queries = t.cast(
-        list[torch.LongTensor],
-        [
-            reformulated_query_and_response["query_ids"]
-            for reformulated_query_and_response in reformulated_query_and_responses
-        ],
+    return logging.ReportGenerationPostPPOOptimizationAssetsBatch(
+        scores=scores,
+        green_scores=green_scores,
+        generated_confidence_values=generated_confidence_values_after_replacement,
+        generated_confidence_values_after_replacement=generated_confidence_values,
+        is_confidence_randomly_replaced=is_confidence_randomly_replaced,
+        generated_texts=generated_texts,
+        ppo_responses=ppo_responses,
+        stats=stats,
     )
-    ppo_responses = t.cast(
-        list[torch.LongTensor],
-        [
-            reformulated_query_and_response["response_ids"]
-            for reformulated_query_and_response in reformulated_query_and_responses
-        ],
-    )
-    return ppo_queries, ppo_responses
