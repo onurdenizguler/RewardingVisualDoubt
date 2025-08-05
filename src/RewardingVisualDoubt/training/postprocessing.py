@@ -114,7 +114,7 @@ def reformulate_query_and_response(
             query: str: the question (E.g. for binary q&a "<some-instructions> Does the image display disease?")
             response: str: the generated response (E.g. for binary q&a 'Yes, the image displays disease. {"confidence": 4}')
     """
-    if not "{" in response:
+    if not "{" in response or "confidence" not in response.split("{")[1]:
         return ReformulatedQueryAndResponseDict(
             query_ids=query_ids,
             response_ids=torch.tensor(
