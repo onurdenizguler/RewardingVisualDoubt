@@ -1,9 +1,12 @@
 from typing import TypedDict
 
+import numpy as np
+import re
 import torch
 import transformers
 
 from RewardingVisualDoubt import shared
+
 
 TOKEN_INDEX_OF_THE_WORD_IMAGE = (
     1967  # 1967 is the index of the image token in the tokenizer (the word image)
@@ -64,8 +67,11 @@ def replace_image_token_with_another_token(
     prediction: torch.Tensor,
     image_token_id: int = shared.LLAVA_IMAGE_TOKEN_INDEX,
     replacement_token_id: int = TOKEN_INDEX_OF_THE_WORD_IMAGE,
+    by_cloning: bool = False,
 ) -> torch.Tensor:
     # TODO: Consider adding the special image token to tokenizer for future editions
+    if by_cloning:
+        prediction = prediction.clone()
     prediction[prediction == image_token_id] = replacement_token_id
     return prediction
 
@@ -74,9 +80,10 @@ def replace_image_token_with_another_token_for_list_of_tensors(
     predictions: list[torch.Tensor],
     image_token_id: int = shared.LLAVA_IMAGE_TOKEN_INDEX,
     replacement_token_id: int = TOKEN_INDEX_OF_THE_WORD_IMAGE,
+    by_cloning: bool = False,
 ) -> list[torch.Tensor]:
     return [
-        replace_image_token_with_another_token(p, image_token_id, replacement_token_id)
+        replace_image_token_with_another_token(p, image_token_id, replacement_token_id, by_cloning)
         for p in predictions
     ]
 
@@ -95,17 +102,17 @@ def get_likeliest_token_from_logits(
     return torch.argmax(logits, dim=-1)
 
 
-def reformulate_query_and_response_for_binary_qa(
+def reformulate_query_and_response(
     query_ids: torch.Tensor, response: str, tokenizer: transformers.PreTrainedTokenizer
 ) -> ReformulatedQueryAndResponseDict:
     """
-    Merge the verbal part of a Binary Q&A questions's response with the Binary Q&A question while
+    Merge the verbal part of a generated response with the input prompt while
     leaving out the confidence part as the response to perform PPO on.
     We assume that whenever the response has the left curly bracket, it has the confidence part.
     Therefore we split the response by the left curly bracket and take the first part as the verbal part.
         Args:
-            query: str: the question (Typically "<some-instructions> Does the image display disease?")
-            response: str: the generated response (Typically 'Yes, the image displays disease. {"confidence": 4}')
+            query: str: the question (E.g. for binary q&a "<some-instructions> Does the image display disease?")
+            response: str: the generated response (E.g. for binary q&a 'Yes, the image displays disease. {"confidence": 4}')
     """
     if not "{" in response:
         return ReformulatedQueryAndResponseDict(
@@ -135,3 +142,83 @@ def reformulate_query_and_response_for_binary_qa(
         query_ids=query_ids_updated,
         response_ids=confidence_only_response_ids,
     )
+
+
+def remove_confidence_part_from_generated_responses(responses: list[str]) -> list[str]:
+    confidence_stripped_generated_responses = []
+    for response in responses:
+        confidence_stripped_generated_responses.append(
+            response.split(("confidence"))[0][:-2].strip()
+        )  # Remove the confidence part from the generated response
+    return confidence_stripped_generated_responses
+
+
+def normalize_confidence_scores(
+    confidence_scores: list[int | None], granular: bool = False
+) -> list[float]:
+    """
+    Normalize confidence scores to a range of 0 to 1.0.
+    """
+    if granular:
+        return [
+            score / shared.POSSIBLE_GRANULAR_CONFIDENCES[-1]
+            for score in confidence_scores
+            if score is not None
+        ]
+    return [
+        score / shared.POSSIBLE_CONFIDENCES[-1] for score in confidence_scores if score is not None
+    ]
+
+
+def _replace_confidence_value_in_text(
+    text: str, old_confidence_value: int, new_confidence_value: int
+) -> str:
+
+    # Match "confidence" (with optional quotes and whitespace), colon, optional space, and capture the number
+    pattern = r'(["\']?confidence["\']?\s*:\s*)(\d{1,2})'
+
+    def replace_confidence(match):
+        current_val = int(match.group(2))
+        if current_val == old_confidence_value:
+            return f"{match.group(1)}{new_confidence_value}"
+        else:
+            return match.group(0)  # no change
+
+    return re.sub(pattern, replace_confidence, text)
+
+
+def _select_random_confidence(granular_confidence: bool) -> int:
+    return (
+        np.random.choice(shared.POSSIBLE_CONFIDENCES)
+        if not granular_confidence
+        else np.random.choice(shared.POSSIBLE_GRANULAR_CONFIDENCES)
+    )
+
+
+def overwrite_confidence(
+    generated_texts: list[str],
+    confidences: list[int | None],
+    granular_confidence: bool,
+) -> list[str]:
+    """
+    Overwrite the confidence of the predictions to a new value.
+    Expected response format: "Yes, the patience has a disease. {"confidence": 10}"
+    """
+    updated_generated_texts = []
+    for idx, confidence in enumerate(confidences):
+        if confidence is not None:  # The generated text is guaranteed to be a valid prediction
+            # change the confidence to a new value
+            selected_new_confidence = _select_random_confidence(granular_confidence)
+            try:
+                updated_generated_texts.append(
+                    _replace_confidence_value_in_text(
+                        generated_texts[idx], confidence, selected_new_confidence
+                    )
+                )
+            except:
+                updated_generated_texts.append(generated_texts[idx])
+
+        else:
+            updated_generated_texts.append(generated_texts[idx])
+
+    return updated_generated_texts

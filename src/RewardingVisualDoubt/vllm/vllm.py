@@ -6,6 +6,7 @@ from pathlib import Path
 
 import huggingface_hub
 import peft
+import requests
 import torch
 import transformers
 import trl
@@ -19,6 +20,7 @@ LLAVA_LORA_ADAPTER = "llava-v1.5-7b-task-lora_radialog_instruct_llava_biovil_unf
 RADIALOG_BASELINE_LORA_ADAPTER_REPO_ID = (
     "ChantalPellegrini/RaDialog-interactive-radiology-report-generation"
 )
+NON_LORA_TRAINABLES_URL = "https://huggingface.co/ChantalPellegrini/RaDialog-interactive-radiology-report-generation/resolve/main/non_lora_trainables.bin"
 MODEL_SAVING_DIR = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models"
 
 
@@ -27,11 +29,12 @@ class RadialogLoraWeightsPath(enum.Enum):
         "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/data/RaDialog_adapter_model.bin"
     )
     BINARY_QA_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_with_confidence_sft_resulting_adapter.pth/adapter_model.bin"
-    REPORT_GENERATION_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_sft_training/2025-07-24/best_eval_model_epoch_1_step_50/adapter_model.bin"
+    REPORT_GENERATION_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_sft_training/2025-07-24/best_eval_model_epoch_1_step_150/adapter_model.bin"
 
 
 class RadialogMergedLlavaModelPath(enum.Enum):
     BINARY_QA_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_binary_qa_with_confidence_sft_full_merged_model"
+    REPORT_GENERATION_WITH_CONFIDENCE_SFT = "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_with_confidence_sft_full_merged_model"
 
 
 class BinaryQAPPOAdapterPath(enum.Enum):
@@ -272,6 +275,7 @@ def save_lora_merged_llava_model_to_local_dir(
 ):
     """
     Use this function to save the merged model to a local directory in full precision.
+    It also downloads the non-LoRA trainable weights.
     """
     model = load_baseline_llava_model_with_vision_modules(
         device=shared.torch_devices.cuda.value,
@@ -281,7 +285,15 @@ def save_lora_merged_llava_model_to_local_dir(
         model, radialog_lora_weights_path=radialog_lora_weights_path
     )
     model = t.cast(peft.LoraModel, model)
+    model = t.cast(shared.llava.LlavaLlamaForCausalLM, model.merge_and_unload())
     model.model.vision_tower = None
-    model = model.merge_and_unload()
     path = os.path.join(MODEL_SAVING_DIR, model_save_name)
-    model.get_model().save_pretrained(path)
+    model.save_pretrained(
+        path,
+    )
+
+    # Download non-LoRA trainable weights
+
+    response = requests.get(NON_LORA_TRAINABLES_URL)
+    with open(os.path.join(path, "non_lora_trainables.bin"), "wb") as f:
+        f.write(response.content)

@@ -13,8 +13,7 @@ import trl
 import wandb
 from tqdm import tqdm
 
-from RewardingVisualDoubt import (dataset, evaluation, prompter, reward,
-                                  shared, training, vllm)
+from RewardingVisualDoubt import dataset, evaluation, prompter, reward, shared, training, vllm
 
 SELECTED_STEPS_UNTIL_CHECKPOINT = 50
 SELECTED_LEARNING_RATE = 1e-5
@@ -312,7 +311,7 @@ def train(
                             "val_conf_calib": wandb.Image(
                                 evaluation.plot_calibration_curve(
                                     confidences=eval_batch_generated_confidence_values_list,
-                                    is_answer_correct=eval_batch_is_answer_correct_list,
+                                    accuracies=eval_batch_is_answer_correct_list,
                                 )
                             )
                         }

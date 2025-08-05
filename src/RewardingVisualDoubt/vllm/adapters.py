@@ -111,7 +111,6 @@ def add_finetuned_or_fresh_lora_adapters_and_fresh_value_head_to_LlavaLlamaForCa
     ) or any(isinstance(m, bitsandbytes.nn.Linear8bitLt) for m in model.modules())
 
     lora_config = _get_lora_config()
-
     if is_model_quantized:
         model = peft.prepare_model_for_kbit_training(model)
     print("Adding LoRA adapters and value head to the model...")
@@ -139,5 +138,4 @@ def add_finetuned_or_fresh_lora_adapters_and_fresh_value_head_to_LlavaLlamaForCa
         model_.mm_projector.to(
             device=torch.device(shared.torch_devices.cuda.value), dtype=torch.bfloat16
         )
-
     return trl_lora_model

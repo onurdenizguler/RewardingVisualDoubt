@@ -42,7 +42,9 @@ def parse_confidences(
         match = re.search(pattern, clean_conf, re.IGNORECASE)
         if match:
             try:
-                value = int(match.group(1))  # Ensure it's an integer
+                value = int(
+                    match.group(1)
+                )  # TODO: Ensure it's an integer instead of converting it to an int anyways
                 if LOWER_CONFIDENCE_BOUND <= value <= UPPER_CONFIDENCE_BOUND:
                     confidences.append(value)
                 else:

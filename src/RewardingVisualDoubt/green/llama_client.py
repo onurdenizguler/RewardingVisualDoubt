@@ -48,6 +48,26 @@ def create_llama_cpp_response_from_response_json(data: dict) -> CompletionRespon
     )
 
 
+create_null_llama_cpp_response = lambda: CompletionResponse(
+    index=0,
+    content="",
+    tokens=[],
+    id_slot=0,
+    stop=False,
+    model="",
+    tokens_predicted=0,
+    tokens_evaluated=0,
+    generation_settings={},
+    prompt="",
+    has_new_line=False,
+    truncated=False,
+    stop_type="",
+    stopping_word="",
+    tokens_cached=0,
+    timings={},
+)
+
+
 async def async_fetch_completion(prompt, session, n_predict=2048):
     try:
         async with session.post(
@@ -71,7 +91,7 @@ def sync_tokenize(
     add_special: bool = True,
     with_pieces: bool = True,
     port: int = PORT,
-) -> list[int] | list[dict] | None:
+) -> list[int] | list[dict]:
     payload = {
         "content": content,
         "add_special": add_special,
@@ -83,13 +103,13 @@ def sync_tokenize(
         data = response.json()
         return data.get("tokens")
     except requests.exceptions.RequestException:
-        return None
+        return []
 
 
 def sync_apply_chat_template(
     messages: list[dict],
     port: int = PORT,
-) -> str | None:
+) -> str:
     payload = {
         "messages": messages,
     }
@@ -102,7 +122,7 @@ def sync_apply_chat_template(
         return data.get("prompt")
     except requests.exceptions.RequestException as e:
         print(e)
-        return None
+        return ""
 
 
 def sync_fetch_completion(
@@ -112,7 +132,7 @@ def sync_fetch_completion(
     temperature: float | None = None,
     top_p: float | None = None,
     port: int = PORT,
-) -> CompletionResponse | None:
+) -> CompletionResponse:
     temp = temperature if do_sample else 0.0
     payload = {
         "prompt": prompt,
@@ -120,6 +140,7 @@ def sync_fetch_completion(
         "stream": False,
         "temperature": temp,
         "top_p": top_p if top_p is not None else 1.0,
+        # "top_k": 0, # keep as is for the moment even though llama.cpp defaults to 40 which is not what we desire
     }
     try:
         response = requests.post(f"http://localhost:{port}/completions", json=payload, timeout=60)
@@ -127,4 +148,4 @@ def sync_fetch_completion(
         data = response.json()
         return create_llama_cpp_response_from_response_json(data)
     except requests.exceptions.RequestException as e:
-        return None
+        return create_null_llama_cpp_response()

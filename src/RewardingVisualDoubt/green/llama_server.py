@@ -14,7 +14,7 @@ N_GPU_LAYERS = 999
 HEALTH_ENDPOINT = f"http://localhost:{PORT}/health"
 
 DEFAULT_CTX_SIZE = 4096
-DEFAULT_PARALLEL_QUERIES = 12
+DEFAULT_PARALLEL_QUERIES = 5
 
 
 def _get_cpu_threads() -> int:
@@ -30,7 +30,12 @@ def is_server_alive() -> bool:
         return False
 
 
+def terminate_llama_server(server: subprocess.Popen):
+    server.terminate()
+
+
 def start_llama_server(
+    port: int = PORT,
     gguf_dir: str = DEFAULT_RADLLAMA_GGUF_DIR,
     quantization: Quantization = Quantization.Q4_K_M,
     ctx_size: int = DEFAULT_CTX_SIZE,
@@ -49,6 +54,10 @@ def start_llama_server(
             "--cont-batching",
             "--threads",
             num_threads,
+            "--port",
+            str(port),
+            # "--parallel",
+            # str(3),
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

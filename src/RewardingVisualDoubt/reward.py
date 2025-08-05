@@ -1,14 +1,29 @@
+import dataclasses
 import math
 import typing as t
 
 from RewardingVisualDoubt import shared
 
+
+def normalize_confidence(confidence: int, granular_confidence: bool, clipped: bool = True) -> float:
+    upper_confidence_boundary = (
+        shared.POSSIBLE_GRANULAR_CONFIDENCES[-1]
+        if granular_confidence
+        else shared.POSSIBLE_CONFIDENCES[-1]
+    )
+    if clipped:
+        normalized_confidence = min(0.999, max(0.001, confidence / upper_confidence_boundary))
+    else:
+        normalized_confidence = confidence / upper_confidence_boundary
+    return normalized_confidence
+
+
+############### Reward functions for Binary Q&A Training ###############
+
 SCALE = 5.0
 MAX_REWARD = -0.0010005003335835344
 MIN_REWARD = -6.907755278982137 / 2
 WRONG_FORMAT_PENALTY = -SCALE * 3.0
-
-############### Reward functions for Binary Q&A Training ###############
 
 
 def default_reward_function(
@@ -17,12 +32,7 @@ def default_reward_function(
     if confidence is None or is_answer_correct is None:
         return WRONG_FORMAT_PENALTY
 
-    upper_confidence_boundary = (
-        shared.POSSIBLE_GRANULAR_CONFIDENCES[-1]
-        if granular_confidence
-        else shared.POSSIBLE_CONFIDENCES[-1]
-    )
-    normalized_confidence = min(0.999, max(0.001, confidence / upper_confidence_boundary))
+    normalized_confidence = normalize_confidence(confidence, granular_confidence)
 
     if is_answer_correct:
         score = math.log(normalized_confidence)
@@ -89,3 +99,113 @@ def generated_answer_and_confidence_to_reward(
         granular_confidence=granular_confidence,
     )
     return reward
+
+
+#########################################################################################################
+# Reward functions for report generation
+##########################################################################################################
+
+
+Scaling = t.Literal["shifted", "centered", "tanh", "logistic"]
+
+WRONG_FORMAT_PENALTY: float = -1.0  # returned when inputs are None or invalid
+
+
+@dataclasses.dataclass(frozen=True)
+class RewardConfig:
+    scaling: Scaling = "shifted"  # "shifted" | "centered" | "tanh" | "logistic"
+    eps: float = 1e-6  # clipping constant (avoid log(0))
+    scale: float = 1.0  # final multiplicative scale
+    squash_scale: t.Optional[float] = (
+        None  # if None, default uses 1 / log(2) so the inflection is at the coin-flip point for smooth squashes ("tanh" / "logistic") else, the effective slope is 1/squash_scale.
+    )
+
+
+def raw_log_likelihood_reward(eps: float, p_hat: float, p_star: float) -> float:
+    p_hat_clipped = min(max(p_hat, eps), 1.0 - eps)  # clip to avoid log(0)
+    # R(p*, p^) = p* log p^ + (1-p*) log(1-p^)
+    raw_reward = p_star * math.log(p_hat_clipped) + (1.0 - p_star) * math.log(1.0 - p_hat_clipped)
+    return raw_reward
+
+
+def normalize_and_scale_reward(
+    R: float, R0: float, R_min: float, R_max: float, config: RewardConfig
+) -> float:
+
+    match config.scaling:
+        case "shifted":
+            # Linear min–max: R_min -> -1, R_max -> +1 (coin-flip tends to be > 0)
+            shaped = 2 * (R - R_min) / (R_max - R_min) - 1
+        case "centered":
+            # Piecewise linear with coin-flip at 0, lower branch maps [R_min, R0] -> [-1, 0], upper branch maps [R0, 0] -> [ 0, 1]
+            if R <= R0:
+                shaped = (R - R_min) / (-R0 - R_min) - 1.0
+            else:
+                shaped = (R - R0) / (-R0)
+        case "tanh" | "logistic":
+            # Smooth, monotone squashes centred at the coin-flip point.
+            # We first shift so that coin-flip is at 0, then apply a squash.
+            x = R - R0  # now x=0 at coin-flip (R = R0)
+            if config.squash_scale is None:
+                # default slope so that the characteristic scale matches log(2)
+                alpha = 1.0 / math.log(2.0)
+            else:
+                alpha = 1.0 / float(config.squash_scale)
+
+            z = alpha * x
+            if config.scaling == "tanh":
+                shaped = math.tanh(z)  # in (-1, 1)
+            else:
+                shaped = 2.0 / (1.0 + math.exp(-z)) - 1.0  # in (-1, 1)
+    return shaped
+
+
+def scaled_normalized_log_likelihood_reward(
+    confidence: int | None,
+    accuracy: float | None,
+    granular_confidence: bool = False,
+    config: RewardConfig = RewardConfig(),
+) -> float:
+    """
+    Configurable reward for Bernoulli targets using log-likelihood shaped into [-1, 1],
+    then scaled by `config.scale`.
+
+    Inputs
+    ------
+    confidence: int | None
+        - confidence value (0-10) or (0-100) or None if not available
+    accuracy: float | None
+        - accuracy value (0.0-1.0) or None if not available
+    granular_confidence: bool
+        - whether the confidence is granular (0-10) or not (0-100)
+    config : RewardConfig
+        - scaling:   "shifted"  -> linear min-max to [-1, 1]
+                      "centered" -> piecewise linear s.t. R_min -> -1, coin-flip -> 0, best -> +1
+                      "tanh"     -> smooth tanh centred at coin-flip, in (-1, 1)
+                      "logistic" -> smooth logistic centred at coin-flip, in (-1, 1)
+        - eps:       small clip to keep logs finite
+        - scale:     final multiplicative scale
+        - squash_scale: optional slope control for smooth variants
+
+    Returns
+    -------
+    float
+        Scaled reward. Returns WRONG_FORMAT_PENALTY on invalid inputs.
+    """
+
+    if confidence is None or accuracy is None:
+        return WRONG_FORMAT_PENALTY * config.scale
+
+    normalized_confidence = normalize_confidence(confidence, granular_confidence, clipped=False)
+    p_hat = normalized_confidence
+    p_star = accuracy
+
+    raw_reward = raw_log_likelihood_reward(config.eps, p_hat, p_star)
+
+    R_min = math.log(config.eps)  # worst-case (after clipping)
+    R0 = -math.log(2.0)  # coin-flip (uninformative)
+    R_max = math.log(1 - config.eps)  # best case (perfect prediction)
+
+    shaped = normalize_and_scale_reward(raw_reward, R0, R_min, R_max, config)
+
+    return float(config.scale * shaped)

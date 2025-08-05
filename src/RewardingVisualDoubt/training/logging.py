@@ -1,17 +1,58 @@
+import dataclasses
 import datetime
 import typing as t
 
+import numpy as np
 import torch
 import transformers
 import wandb
 
 from RewardingVisualDoubt import evaluation, shared
 
-from . import reinforcement
+from . import parameters, postprocessing
+
+
+class GameLogs(t.TypedDict):
+    queries: list[str]
+    responses: list[str]
+    ppo_target_responses: list[str]
+    is_answer_correct: list[bool]
+    scores: list[float]
+    confidences: list[int | None]
+    confidences_after_replacement: list[int | None]
+    is_confidence_randomly_replaced: list[bool]
+
+
+@dataclasses.dataclass
+class ReportGenerationRunFinalMetrics:
+    mean_score_train_at_last_checkpoint: float
+
+    last_mean_score_eval: float
+    last_ece_eval: float
+    last_conf_distribution_kl_eval: float
+    last_ece_and_conf_distribution_kl_eval: float
+
+    best_mean_score_eval: float
+    best_ece_eval: float
+    best_conf_distribution_kl_eval: float
+    best_ece_and_conf_distribution_kl_eval: float
+
+
+def create_empty_game_logs() -> GameLogs:
+    return GameLogs(
+        queries=[],
+        responses=[],
+        ppo_target_responses=[],
+        is_answer_correct=[],
+        scores=[],
+        confidences=[],
+        confidences_after_replacement=[],
+        is_confidence_randomly_replaced=[],
+    )
 
 
 def _handle_accumulating_game_logs_for_binary_qa(
-    accumulating_game_logs: reinforcement.GameLogs,
+    accumulating_game_logs: GameLogs,
     queries: list[str],
     responses: list[str],
     ppo_target_responses: list[str],
@@ -20,7 +61,7 @@ def _handle_accumulating_game_logs_for_binary_qa(
     confidences: list[int | None],
     old_generated_confidence_values: list[int | None],
     is_confidence_randomly_replaced: list[bool],
-) -> reinforcement.GameLogs:
+) -> GameLogs:
 
     accumulating_game_logs["queries"].extend(queries)
     accumulating_game_logs["responses"].extend(responses)
@@ -33,7 +74,7 @@ def _handle_accumulating_game_logs_for_binary_qa(
         is_confidence_randomly_replaced
     )
 
-    truncated_accumulating_game_logs: reinforcement.GameLogs = {
+    truncated_accumulating_game_logs: GameLogs = {
         "queries": [],
         "responses": [],
         "ppo_target_responses": [],
@@ -55,7 +96,7 @@ def _handle_accumulating_game_logs_for_binary_qa(
 
 def log_custom_metrics_for_binary_qa(
     tokenizer: transformers.PreTrainedTokenizer,
-    accumulating_game_logs: reinforcement.GameLogs,
+    accumulating_game_logs: GameLogs,
     input_ids: torch.Tensor,
     labels: torch.Tensor,
     generated_texts: list[str],
@@ -104,13 +145,13 @@ def log_custom_metrics_for_binary_qa(
             stats["confidence_calibration_last_500_samples"] = wandb.Image(
                 evaluation.plot_calibration_curve(
                     confidences=truncated_accumulating_game_logs["confidences"],
-                    is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
+                    accuracies=truncated_accumulating_game_logs["is_answer_correct"],
                 )
             )
             stats["confidence_calibration_all_samples"] = wandb.Image(
                 evaluation.plot_calibration_curve(
                     confidences=accumulating_game_logs["confidences"],
-                    is_answer_correct=accumulating_game_logs["is_answer_correct"],
+                    accuracies=accumulating_game_logs["is_answer_correct"],
                 )
             )
 
@@ -119,11 +160,11 @@ def log_custom_metrics_for_binary_qa(
 
     bins_100 = evaluation.binify_accuracies(
         confidences=truncated_accumulating_game_logs["confidences"][-100:],
-        is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"][-100:],
+        accuracies=truncated_accumulating_game_logs["is_answer_correct"][-100:],
     )
     bins_500 = evaluation.binify_accuracies(
         confidences=truncated_accumulating_game_logs["confidences"],
-        is_answer_correct=truncated_accumulating_game_logs["is_answer_correct"],
+        accuracies=truncated_accumulating_game_logs["is_answer_correct"],
     )
     if bins_100:
         counts_100, avg_acc_100 = bins_100
@@ -154,6 +195,102 @@ def log_custom_metrics_for_binary_qa(
     return table_rows
 
 
+def log_eval_metrics_for_report_generation_ppo(
+    eval_batch_generated_confidence_values_list: list[int | None],
+    eval_batch_scores_list: list[float],
+    eval_batch_green_scores_list: list[float | None],
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+) -> t.Tuple[
+    float,
+    float,
+    float,
+    float,
+]:
+    eval_bins = evaluation.binify_accuracies(
+        confidences=eval_batch_generated_confidence_values_list,
+        accuracies=eval_batch_green_scores_list,
+    )
+    ece_eval = 1.0  # Set to maximum value to be able to calculate ece_and_distribution_score in the worst case that no bins are returned
+    if eval_bins:
+        counts_eval, avg_acc_eval = eval_bins
+        ece_eval = evaluation.compute_ece(avg_acc_eval, counts_eval)
+
+    eval_conf_distribution_kl = evaluation.compute_confidence_distribution_metric(
+        postprocessing.normalize_confidence_scores(
+            eval_batch_generated_confidence_values_list,
+            hyperparameters.granular_confidence,
+        ),
+        num_bins=11 if not hyperparameters.granular_confidence else 101,
+    )
+    mean_eval_score = float(np.mean(eval_batch_scores_list))
+    mean_std_score = float(np.std(eval_batch_scores_list))
+
+    wandb.log({"mean_score_evaluation": mean_eval_score})
+    wandb.log({"std_score_evaluation": mean_std_score})
+    wandb.log({"ECE_eval": ece_eval})
+    wandb.log({"eval_conf_distribution_kl": eval_conf_distribution_kl})
+
+    try:
+        wandb.log(
+            {
+                "val_conf_calib": wandb.Image(
+                    evaluation.plot_calibration_curve(
+                        confidences=eval_batch_generated_confidence_values_list,
+                        accuracies=eval_batch_green_scores_list,
+                    )
+                )
+            }
+        )
+    except:
+        pass
+
+    return ece_eval, eval_conf_distribution_kl, mean_eval_score, mean_std_score
+
+    ######### 5.9 Create a report and log the training stats #########
+    # input_texts_list = tokenizer.batch_decode(
+    #     postprocessing.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
+    # )
+    # queries_with_gt_labels = [
+    #     f"(GT Label: {str(labels.bool().tolist()[idx])}) - {input_prompt}"
+    #     for idx, input_prompt in enumerate(input_texts_list)
+    # ]
+
+    # table_rows = []
+    # if accumulating_game_logs:
+    #     table_rows = logging.log_custom_metrics_for_binary_qa(
+    #         tokenizer,
+    #         accumulating_game_logs,
+    #         input_ids,
+    #         labels,
+    #         generated_texts,
+    #         generated_confidence_values,
+    #         old_generated_confidence_values,
+    #         is_confidence_randomly_replaced,
+    #         generated_answer_labels,
+    #         scores,
+    #         ppo_responses,
+    #         stats,
+    #         queries_with_gt_labels,
+    #         log_calibration_plot,
+    #     )
+
+    # ppo_trainer.log_stats(
+    #     stats=stats,
+    #     table_rows=table_rows,
+    #     column_names=[
+    #         "query",
+    #         "response",
+    #         "ppo_target_response",
+    #         "is_answer_correct",
+    #         "confidence",
+    #         "confidence_after_replacement",
+    #         "is_confidence_randomly_replaced",
+    #         "reward",
+    #     ],
+    #     rewards=scores,
+    # )
+
+
 def get_wandb_parameters_for_sft(
     learning_rate: float,
     prompter: t.Callable,
@@ -176,5 +313,40 @@ def get_wandb_parameters_for_sft(
             "gradient_accumulation_steps": gradient_accumulation_steps,
             "num_batches_to_evaluate": num_batches_to_evaluate,
             "n_training_batches_to_skip": n_training_batches_to_skip,
+        },
+    }
+
+
+def get_wandb_parameters_for_report_generation_ppo(
+    metaparameters: parameters.TrainingMetaParameters,
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+    prompter: t.Callable,
+) -> t.Dict[str, t.Any]:
+
+    return {
+        "id": f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(hyperparameters.learning_rate, '.0e')}_{hyperparameters.chance_to_change_confidence}_{hyperparameters.reward_config.scaling}",
+        "config": {
+            "date_of_training": datetime.datetime.now().strftime("%Y-%m-%d"),
+            "learning_rate": hyperparameters.learning_rate,
+            "chance_to_change_confidence": hyperparameters.chance_to_change_confidence,
+            "reward_function": hyperparameters.reward_function.__name__,
+            "reward_scaling_method": hyperparameters.reward_config.scaling,
+            "reward_eps": hyperparameters.reward_config.eps,
+            "reward_scale": hyperparameters.reward_config.scale,
+            "reward_squash_scale": hyperparameters.reward_config.squash_scale,
+            "granular_confidence": str(hyperparameters.granular_confidence),
+            "prompter": prompter.__name__,
+            "starting_llava_model_path": metaparameters.llava_model_path,
+            "starting_adapter_path": metaparameters.adapter_path,
+            "num_epochs": hyperparameters.num_epochs,
+            "perform_validation_before_starting_training": str(
+                metaparameters.perform_validation_before_starting_training
+            ),
+            "steps_until_checkpoint": hyperparameters.steps_until_checkpoint,
+            "batch_size": hyperparameters.batch_size,
+            "mini_batch_size": hyperparameters.mini_batch_size,
+            "gradient_accumulation_steps": hyperparameters.gradient_accumulation_steps,
+            "num_batches_to_evaluate": metaparameters.num_batches_to_evaluate,
+            "n_training_batches_to_skip": metaparameters.n_training_batches_to_skip,
         },
     }
