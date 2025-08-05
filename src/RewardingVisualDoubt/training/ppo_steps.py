@@ -6,7 +6,7 @@ import torch
 import transformers
 import trl
 
-from RewardingVisualDoubt import dataset, green, response, reward
+from RewardingVisualDoubt import dataset, green, response, reward, shared
 
 from . import llava_ppo, logging, postprocessing, reinforcement
 
@@ -83,7 +83,7 @@ def radialog_binary_qa_ppo_training_step(
     ppo_trainer: llava_ppo.MultimodalPPOTrainer,
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
     reward_function: t.Callable,
-    accumulating_game_logs: reinforcement.GameLogs | None = None,
+    accumulating_game_logs: logging.GameLogs | None = None,
     chance_to_change_confidence: float = 0.5,  # Default value: every 2nd batch
     granular_confidence: bool = False,
     log_calibration_plot: bool = False,
@@ -228,6 +228,31 @@ def radialog_binary_qa_ppo_training_step(
 ####################################################################################################################
 
 
+def generate_reports(
+    model: trl.AutoModelForCausalLMWithValueHead,
+    ppo_trainer: llava_ppo.MultimodalPPOTrainer,
+    input_ids_list: list[torch.Tensor],
+    input_ids: torch.Tensor,
+    images: torch.Tensor,
+    stopping_criteria: shared.KeywordsStoppingCriteria,
+    generation_kwargs: dict,
+) -> list[torch.Tensor]:
+
+    print("Generating reports...")
+    model.eval()
+    model.gradient_checkpointing_disable()
+    generated_ids = ppo_trainer.generate(
+        query_tensor=input_ids_list,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
+        images=images,
+        return_prompt=False,
+        batch_size=input_ids.shape[0],
+        use_cache=True,
+        stopping_criteria=[stopping_criteria],
+        **generation_kwargs,
+    )
+    return generated_ids
+
+
 def radialog_report_generation_ppo_evaluation_step(
     model: trl.AutoModelForCausalLMWithValueHead,
     device: torch.device,
@@ -252,17 +277,14 @@ def radialog_report_generation_ppo_evaluation_step(
     )
 
     ######### 5.2 Generate the reports #########
-    print("Generating reports...")
-    model.eval()
-    model.gradient_checkpointing_disable()
-    generated_ids = ppo_trainer.generate(
-        query_tensor=input_ids_list,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
-        images=images,
-        return_prompt=False,
-        batch_size=input_ids.shape[0],
-        use_cache=True,
-        stopping_criteria=[stopping_criteria],
-        **generation_kwargs_eval,
+    generated_ids = generate_reports(
+        model,
+        ppo_trainer,
+        input_ids_list,
+        input_ids,
+        images,
+        stopping_criteria,
+        generation_kwargs_eval,
     )
 
     ######### 5.3 Parse the responses and create post-generation assets #########
@@ -306,13 +328,13 @@ def radialog_report_generation_ppo_training_step(
     generation_kwargs_ppo: dict,
     ppo_trainer: llava_ppo.MultimodalPPOTrainer,
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
-    reward_function: t.Callable,
+    reward_function: t.Callable[..., float],
     reward_config: reward.RewardConfig,
-    accumulating_game_logs: reinforcement.GameLogs | None = None,
+    accumulating_game_logs: logging.GameLogs | None = None,
     chance_to_change_confidence: float = 0.5,  # Default value: every 2nd batch
     granular_confidence: bool = False,
     log_calibration_plot: bool = False,
-) -> list[torch.FloatTensor]:
+) -> tuple[list[torch.FloatTensor], list[int | None], list[float | None]]:
 
     ######### 5.1 Unpack the batch #########
 
@@ -327,16 +349,14 @@ def radialog_report_generation_ppo_training_step(
 
     ######### 5.2 Generate the reports #########
     print("Generating reports...")
-    model.eval()
-    model.gradient_checkpointing_disable()
-    generated_ids = ppo_trainer.generate(
-        query_tensor=input_ids_list,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
-        images=images,
-        return_prompt=False,
-        batch_size=input_ids.shape[0],
-        use_cache=True,
-        stopping_criteria=[stopping_criteria],
-        **generation_kwargs_ppo,
+    generated_ids = generate_reports(
+        model,
+        ppo_trainer,
+        input_ids_list,
+        input_ids,
+        images,
+        stopping_criteria,
+        generation_kwargs_ppo,
     )
 
     ######### 5.3 Parse the responses and create post-generation assets #########
@@ -421,51 +441,7 @@ def radialog_report_generation_ppo_training_step(
         images=images,
     )
 
-    ######### 5.9 Create a report and log the training stats #########
-    # input_texts_list = tokenizer.batch_decode(
-    #     postprocessing.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
-    # )
-    # queries_with_gt_labels = [
-    #     f"(GT Label: {str(labels.bool().tolist()[idx])}) - {input_prompt}"
-    #     for idx, input_prompt in enumerate(input_texts_list)
-    # ]
-
-    # table_rows = []
-    # if accumulating_game_logs:
-    #     table_rows = logging.log_custom_metrics_for_binary_qa(
-    #         tokenizer,
-    #         accumulating_game_logs,
-    #         input_ids,
-    #         labels,
-    #         generated_texts,
-    #         generated_confidence_values,
-    #         old_generated_confidence_values,
-    #         is_confidence_randomly_replaced,
-    #         generated_answer_labels,
-    #         scores,
-    #         ppo_responses,
-    #         stats,
-    #         queries_with_gt_labels,
-    #         log_calibration_plot,
-    #     )
-
-    # ppo_trainer.log_stats(
-    #     stats=stats,
-    #     table_rows=table_rows,
-    #     column_names=[
-    #         "query",
-    #         "response",
-    #         "ppo_target_response",
-    #         "is_answer_correct",
-    #         "confidence",
-    #         "confidence_after_replacement",
-    #         "is_confidence_randomly_replaced",
-    #         "reward",
-    #     ],
-    #     rewards=scores,
-    # )
-
-    return scores
+    return scores, generated_confidence_values, green_scores
 
 
 #####################################################################################################################
