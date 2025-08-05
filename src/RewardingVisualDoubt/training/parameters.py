@@ -17,6 +17,8 @@ class TrainingMetaParameters:
     perform_validation_before_starting_training: bool
     n_training_batches_to_skip: int
     num_batches_to_evaluate: int
+    save_training_model_every_n_checkpoints: int
+    plot_confidence_calibration_for_training_batches_every_n_batch: int
 
 
 @dataclasses.dataclass(frozen=True)
