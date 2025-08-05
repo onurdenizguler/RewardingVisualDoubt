@@ -1,6 +1,8 @@
 import datetime
+import dataclasses
 import os
 import pathlib as path
+import typing as t
 
 import peft
 import trl
@@ -9,6 +11,11 @@ import trl
 from RewardingVisualDoubt import evaluation
 
 from . import parameters
+
+
+@dataclasses.dataclass
+class PatienceTracker:
+    value: int = 0
 
 
 def save_best_eval_lora_adapters_to_dir(
@@ -47,41 +54,48 @@ def save_best_eval_lora_adapters_and_value_head_to_dir(
 
 def report_generation_ppo_decision_to_break(
     step: int,
-    patience: int,
-    eval_conf_distribution_kl: float,
-    ece_eval: float,
-    best_ece_and_distribution_score: float,
+    patience: PatienceTracker,
+    reward_ece_and_distribution_score: evaluation.RewardECEAndDistributionScore,
+    best_reward_ece_and_distribution_kl_eval_aggregated_score: float,
     hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+    heuristics_fn: t.Callable[[evaluation.RewardECEAndDistributionScore], float],
 ) -> bool:
 
-    if eval_conf_distribution_kl is 0 or ece_eval is None:
-        current_ece_and_distribution_score = best_ece_and_distribution_score * 0.001
+    if (
+        reward_ece_and_distribution_score.conf_distribution_kl_divergence is float("inf")
+        or reward_ece_and_distribution_score.ece is 1.0
+    ):
+        reward_ece_and_distribution_kl_eval_aggregated_score = (
+            best_reward_ece_and_distribution_kl_eval_aggregated_score * 0.001
+        )
     else:
-        current_ece_and_distribution_score = evaluation.reward_ece_and_distribution_score_heuristic(
-            ece=ece_eval,
-            conf_distribution_kl_divergence=eval_conf_distribution_kl,
-            avg_reward=0.0,  # Not used in this heuristic
+        reward_ece_and_distribution_kl_eval_aggregated_score = heuristics_fn(
+            reward_ece_and_distribution_score
         )
 
     relative_improvement = (
-        current_ece_and_distribution_score - best_ece_and_distribution_score
-    ) / (abs(best_ece_and_distribution_score) + 1e-12)
+        reward_ece_and_distribution_kl_eval_aggregated_score
+        - best_reward_ece_and_distribution_kl_eval_aggregated_score
+    ) / (abs(best_reward_ece_and_distribution_kl_eval_aggregated_score) + 1e-12)
 
     if (
-        current_ece_and_distribution_score > best_ece_and_distribution_score
+        reward_ece_and_distribution_kl_eval_aggregated_score
+        > best_reward_ece_and_distribution_kl_eval_aggregated_score
         and relative_improvement >= hyperparameters.early_stopping_min_improvement
     ):
-        best_ece_and_distribution_score = current_ece_and_distribution_score
-        patience = 0
+        best_reward_ece_and_distribution_kl_eval_aggregated_score = (
+            reward_ece_and_distribution_kl_eval_aggregated_score
+        )
+        patience.value = 0
     else:
-        patience += 1
+        patience.value += 1
         if (
             hyperparameters.early_stopping_patience
-            and patience >= hyperparameters.early_stopping_patience
+            and patience.value >= hyperparameters.early_stopping_patience
         ):
             print(
                 f"Early stopping at step {step}: "
-                f"best_score={best_ece_and_distribution_score:.4f}, current_score={current_ece_and_distribution_score:.4f}, "
+                f"best_score={best_reward_ece_and_distribution_kl_eval_aggregated_score:.4f}, current_score={reward_ece_and_distribution_kl_eval_aggregated_score:.4f}, "
                 f"relative_improvement={relative_improvement:.4f}"
             )
             return True
