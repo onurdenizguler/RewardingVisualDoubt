@@ -6,6 +6,8 @@ training_metaparameters:
   perform_validation_before_starting_training: false
   n_training_batches_to_skip: 0
   num_batches_to_evaluate: 0
+  save_training_model_every_n_checkpoints: 3
+  plot_confidence_calibration_for_training_batches_every_n_batch: 4
 
 report_generation_ppo_hyperparameters:
   num_epochs: 1
