@@ -1,6 +1,7 @@
 import dataclasses
 import typing as t
 
+import math
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -12,18 +13,44 @@ class RewardECEAndDistributionScore:
     avg_reward: float
 
 
+# def reward_ece_and_distribution_score_heuristic(
+#     reward_ece_and_distribution_score: RewardECEAndDistributionScore,
+#     alpha: float = 1.0,
+#     beta: float = 1.0,
+#     theta: float = 0.0,
+# ) -> float:
+
+#     return (
+#         -reward_ece_and_distribution_score.ece * alpha
+#         - reward_ece_and_distribution_score.conf_distribution_kl_divergence * beta
+#         + reward_ece_and_distribution_score.avg_reward * theta
+#     )
+
+
 def reward_ece_and_distribution_score_heuristic(
     reward_ece_and_distribution_score: RewardECEAndDistributionScore,
-    alpha: float = 1.0,
-    beta: float = 1.0,
-    theta: float = 0.0,
+    n_bins: int,
+    r_max_and_r_min: tuple[float, float],
+    w_ece: float = 0.4,
+    w_kl: float = 0.4,
+    w_reward: float = 0.2,
 ) -> float:
+    """Returns a scalar in [0, 1]; higher = better."""
+    r_max, r_min = r_max_and_r_min
+    ece_norm = reward_ece_and_distribution_score.ece  # already 0–1
+    kl_norm = min(
+        reward_ece_and_distribution_score.conf_distribution_kl_divergence / math.log(n_bins), 1.0
+    )  # 0–1
+    r_norm = max(
+        min((reward_ece_and_distribution_score.avg_reward - r_min) / (r_max - r_min), 1.0), 0
+    )  # 0–1
 
-    return (
-        -reward_ece_and_distribution_score.ece * alpha
-        - reward_ece_and_distribution_score.conf_distribution_kl_divergence * beta
-        + reward_ece_and_distribution_score.avg_reward * theta
+    score = (
+        w_ece * (1.0 - ece_norm)  # small ECE → big score
+        + w_kl * (1.0 - kl_norm)  # small KL  → big score
+        + w_reward * r_norm  # large reward → big score
     )
+    return score / (w_ece + w_kl + w_reward)  # keeps final range [0, 1]
 
 
 def compute_ece(avg_acc: list[float], counts: list[int]):
@@ -118,7 +145,7 @@ def compute_confidence_distribution_metric(
     counts, _ = np.histogram(confidences, bins=num_bins, range=(0.0, 1.0), density=False)
     total = counts.sum()
     if total == 0:
-        return 0.0  # no data → treat as perfectly uniform
+        return math.log(num_bins)  # no data → treat as worst case (only one bin is filled)
 
     P = counts / total
     U = np.ones_like(P) / num_bins
