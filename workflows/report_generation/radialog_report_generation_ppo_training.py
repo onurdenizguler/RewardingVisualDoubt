@@ -17,6 +17,7 @@ from RewardingVisualDoubt import (
     evaluation,
     green,
     prompter,
+    reward,
     shared,
     training,
     vllm,
@@ -28,7 +29,7 @@ def train(
     hyperparameters: training.parameters.ReportGenerationPPOHyperparameters,
 ) -> training.ReportGenerationRunFinalMetrics:
 
-    ######################################## 1. Load the model and tokenizer ########################################
+    ######################################## 1. Load the RaDialog model and tokenizer, start the RadLLamaGREEN llama.cpp server ########################################
 
     device, device_str = shared.get_device_and_device_str()
     model = vllm.load_pretrained_llava_model_for_ppo_training_with_lora_adapters(
@@ -42,6 +43,11 @@ def train(
     )
 
     model.config.padding_side = "left"
+
+    print("Starting the llama server...")
+    green.start_llama_server(quantization=green.Quantization.Q4_K_M)
+    while not green.is_server_alive():
+        time.sleep(1)
 
     ######################################## 2. Load the datasets and the dataloaders ########################################
 
@@ -75,7 +81,7 @@ def train(
 
     dataloader_eval = dataset.get_mimic_cxr_llava_model_input_dataloader(
         dataset_eval,
-        batch_size=2 * hyperparameters.batch_size,
+        batch_size=hyperparameters.eval_batch_size,
         padding_tokenizer=vllm.load_pretrained_llava_tokenizer_with_image_support(
             for_use_in_padding=True
         ),
@@ -97,18 +103,6 @@ def train(
         # backward_batch_size=MINI_BATCH_SIZE,  # Default value from TRL library is 1, gets overwritten anyways at __init__ time
         mini_batch_size=hyperparameters.mini_batch_size,
         gradient_accumulation_steps=hyperparameters.gradient_accumulation_steps,
-        log_with="wandb",
-        tracker_project_name=metaparameters.name_of_fine_tuning,
-        tracker_kwargs={
-            "wandb": training.get_wandb_parameters_for_report_generation_ppo(
-                metaparameters, hyperparameters, selected_prompter_fn
-            ),
-        },
-        project_kwargs=dataclasses.asdict(
-            accelerate.utils.ProjectConfiguration(
-                project_dir=metaparameters.name_of_fine_tuning, logging_dir="logs"
-            )
-        ),
         remove_unused_columns=False,
         kl_penalty="kl",
         init_kl_coef=0.05,
@@ -126,10 +120,11 @@ def train(
     }
 
     generation_kwargs_eval = {
+        "top_k": 0.0,  # No top-k sampling
         "top_p": 1.0,  # Let us limit the sampling a bit
         "temperature": 1.0,  # Decrease the randomness
         "do_sample": True,
-        "pad_token_id": tokenizer.eos_token_id,
+        "pad_token_id": tokenizer.pad_token_id,
         "max_new_tokens": 300,
         "eos_token_id": tokenizer.eos_token_id,
     }
@@ -145,10 +140,13 @@ def train(
         ),
     )
 
-    print("Starting the llama server...")
-    green.start_llama_server(quantization=green.Quantization.Q4_K_M)
-    while not green.is_server_alive():
-        time.sleep(1)
+    wandb.init(
+        project=metaparameters.name_of_fine_tuning,
+        dir="/home/guests/deniz_gueler/repos/RewardingVisualDoubt/logs/radialog_report_generation_ppo_training",
+        **training.get_wandb_parameters_for_report_generation_ppo(
+            metaparameters, hyperparameters, selected_prompter_fn
+        ),
+    )
 
     ######################################## 5. Train the model ######################################################################################################
 
@@ -164,7 +162,6 @@ def train(
     best_conf_distribution_kl_eval: float = float("inf")
     best_reward_ece_and_distribution_kl_eval_aggregated_score: float = -float("inf")
 
-    # patience: int = 0
     patience = training.PatienceTracker()
     scores_until_checkpoint_train: list[float] = []
     accumulating_game_logs = training.create_empty_game_logs_for_report_generation()
@@ -172,9 +169,9 @@ def train(
         metaparameters.perform_validation_before_starting_training
     )
 
-    heuristic_fn: t.Callable[[evaluation.RewardECEAndDistributionScore], float] = (
-        hyperparameters.reward_ece_and_distribution_score_heuristic
-    )
+    heuristic_fn: t.Callable[
+        [evaluation.RewardECEAndDistributionScore, int, tuple[float, float]], float
+    ] = hyperparameters.reward_ece_and_distribution_score_heuristic
     for epoch in range(hyperparameters.num_epochs):
 
         for step in tqdm(
@@ -201,6 +198,7 @@ def train(
 
                 scores_until_checkpoint_train += [s.item() for s in post_optimization_assets.scores]
                 training.log_train_metrics_for_report_generation_ppo(
+                    step=step + 1,
                     post_optimization_assets=post_optimization_assets,
                     device=device,
                     tokenizer=tokenizer,
@@ -209,8 +207,7 @@ def train(
                     hyperparameters=hyperparameters,
                     accumulating_game_logs=accumulating_game_logs,
                     log_calibration_plot=(
-                        step
-                        + 1
+                        (step + 1)
                         % metaparameters.plot_confidence_calibration_for_training_batches_every_n_batch
                     )
                     == 0,  # log at every (1/n) of the checkpoint interval
@@ -245,7 +242,8 @@ def train(
                         ppo_trainer.save_pretrained(
                             save_dir,
                         )
-                    wandb.log({"mean_score_training_checkpoint": mean_score_train})
+                    wandb.log({"mean_score_training_checkpoint": mean_score_train}, step=step + 1)
+                    scores_until_checkpoint_train = []
 
                 model.eval()
                 batch_scores_list_eval: list[float] = []
@@ -284,6 +282,7 @@ def train(
 
                 ece_eval, conf_distribution_kl_eval, mean_score_eval, _ = (
                     training.log_eval_metrics_for_report_generation_ppo(
+                        step + 1,
                         batch_generated_confidence_values_list_eval,
                         batch_scores_list_eval,
                         batch_green_scores_list_eval,
@@ -297,7 +296,23 @@ def train(
                     avg_reward=mean_score_eval,
                 )
                 reward_ece_and_distribution_kl_eval_aggregated_score = heuristic_fn(
-                    reward_ece_and_distribution_score
+                    reward_ece_and_distribution_score,
+                    (
+                        len(shared.POSSIBLE_GRANULAR_CONFIDENCES)
+                        if hyperparameters.granular_confidence
+                        else len(shared.POSSIBLE_CONFIDENCES)
+                    ),
+                    reward.get_max_and_min_reward(
+                        hyperparameters.reward_function,
+                        hyperparameters.granular_confidence,
+                        hyperparameters.reward_config,
+                    ),
+                )
+                wandb.log(
+                    {
+                        "reward_ece_and_distribution_kl_aggregated_score_eval": reward_ece_and_distribution_kl_eval_aggregated_score,
+                        "step": step + 1,
+                    }
                 )
 
                 if (
@@ -318,7 +333,7 @@ def train(
                     best_conf_distribution_kl_eval = conf_distribution_kl_eval
 
                 decision_to_break = training.report_generation_ppo_decision_to_break(
-                    step=step,
+                    step=step + 1,
                     patience=patience,
                     reward_ece_and_distribution_score=evaluation.RewardECEAndDistributionScore(
                         ece=ece_eval,
@@ -335,7 +350,7 @@ def train(
                         training.save_best_eval_lora_adapters_and_value_head_to_dir(
                             ppo_trainer,
                             epoch,
-                            step,
+                            step + 1,
                             metaparameters.out_dir,
                             metaparameters.name_of_fine_tuning,
                         )
@@ -351,12 +366,12 @@ def train(
 
     return training.ReportGenerationRunFinalMetrics(
         mean_score_train_at_last_checkpoint=mean_score_train,
-        last_mean_score_eval=0,
-        last_ece_eval=0,
-        last_conf_distribution_kl_eval=0,
-        last_ece_and_conf_distribution_kl_eval=0,
-        best_mean_score_eval=0,
-        best_ece_eval=0,
-        best_conf_distribution_kl_eval=0,
-        best_ece_and_conf_distribution_kl_eval=0,
+        last_mean_score_eval=mean_score_eval,
+        last_ece_eval=ece_eval,
+        last_conf_distribution_kl_eval=conf_distribution_kl_eval,
+        last_ece_and_conf_distribution_kl_eval=reward_ece_and_distribution_kl_eval_aggregated_score,
+        best_mean_score_eval=best_mean_score_eval,
+        best_ece_eval=best_ece_eval,
+        best_conf_distribution_kl_eval=best_conf_distribution_kl_eval,
+        best_ece_and_conf_distribution_kl_eval=best_reward_ece_and_distribution_kl_eval_aggregated_score,
     )
