@@ -1,9 +1,10 @@
 import math
+import os
 import time
 import typing
-import warnings
 from typing import List
 
+import huggingface_hub
 import numpy as np
 import peft
 import torch
@@ -649,6 +650,7 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
         table_rows: list,
         column_names: list,
         rewards: List[torch.FloatTensor],
+        step: int | None = None,
     ):
         """
         A function that logs all the training stats. Call it at the end of each epoch.
@@ -694,5 +696,8 @@ class MultimodalPPOTrainer(trl.PPOTrainer):
 
         self.accelerator.log(
             logs,
-            step=self.current_step if self.config.log_with == "tensorboard" else None,
+            step=step,
         )
+
+    def create_model_card(self, path: str, model_name: typing.Optional[str] = "TRL Model") -> None:
+        pass
