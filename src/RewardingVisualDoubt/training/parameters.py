@@ -36,6 +36,7 @@ class ReportGenerationPPOHyperparameters(Parameters):
     steps_until_checkpoint: int
     gradient_accumulation_steps: int
     batch_size: int
+    eval_batch_size: int
     mini_batch_size: int
     learning_rate: float
     chance_to_change_confidence: float
