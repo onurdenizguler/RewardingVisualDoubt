@@ -8,7 +8,7 @@ import peft
 import trl
 
 
-from RewardingVisualDoubt import evaluation
+from RewardingVisualDoubt import shared, reward, evaluation
 
 from . import parameters
 
@@ -58,7 +58,9 @@ def report_generation_ppo_decision_to_break(
     reward_ece_and_distribution_score: evaluation.RewardECEAndDistributionScore,
     best_reward_ece_and_distribution_kl_eval_aggregated_score: float,
     hyperparameters: parameters.ReportGenerationPPOHyperparameters,
-    heuristics_fn: t.Callable[[evaluation.RewardECEAndDistributionScore], float],
+    heuristics_fn: t.Callable[
+        [evaluation.RewardECEAndDistributionScore, int, tuple[float, float]], float
+    ],
 ) -> bool:
 
     if (
@@ -70,7 +72,19 @@ def report_generation_ppo_decision_to_break(
         )
     else:
         reward_ece_and_distribution_kl_eval_aggregated_score = heuristics_fn(
-            reward_ece_and_distribution_score
+            reward_ece_and_distribution_score,
+            (
+                len(shared.POSSIBLE_GRANULAR_CONFIDENCES)
+                if hyperparameters.granular_confidence
+                else len(shared.POSSIBLE_CONFIDENCES)
+            ),
+            (
+                reward.get_max_and_min_reward(
+                    hyperparameters.reward_function,
+                    hyperparameters.granular_confidence,
+                    hyperparameters.reward_config,
+                )
+            ),
         )
 
     relative_improvement = (
@@ -94,13 +108,18 @@ def report_generation_ppo_decision_to_break(
             and patience.value >= hyperparameters.early_stopping_patience
         ):
             print(
-                f"Early stopping at step {step}: "
+                f"Early stopping at step {step} due to lack of relative improvement: "
                 f"best_score={best_reward_ece_and_distribution_kl_eval_aggregated_score:.4f}, current_score={reward_ece_and_distribution_kl_eval_aggregated_score:.4f}, "
                 f"relative_improvement={relative_improvement:.4f}"
             )
             return True
 
     if hyperparameters.max_steps and step >= hyperparameters.max_steps:
+        print(
+            f"Early stopping at step {step} due to max_steps: "
+            f"best_score={best_reward_ece_and_distribution_kl_eval_aggregated_score:.4f}, current_score={reward_ece_and_distribution_kl_eval_aggregated_score:.4f}, "
+            f"relative_improvement={relative_improvement:.4f}"
+        )
         return True
 
     return False
