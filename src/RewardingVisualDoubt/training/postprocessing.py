@@ -1,11 +1,11 @@
-from typing import TypedDict
+import typing as t
 
 import numpy as np
 import re
 import torch
 import transformers
 
-from RewardingVisualDoubt import shared
+from RewardingVisualDoubt import response, shared
 
 
 TOKEN_INDEX_OF_THE_WORD_IMAGE = (
@@ -13,7 +13,7 @@ TOKEN_INDEX_OF_THE_WORD_IMAGE = (
 )
 
 
-class ReformulatedQueryAndResponseDict(TypedDict):
+class ReformulatedQueryAndResponseDict(t.TypedDict):
     query_ids: torch.Tensor
     response_ids: torch.Tensor
 
@@ -209,6 +209,8 @@ def overwrite_confidence(
         if confidence is not None:  # The generated text is guaranteed to be a valid prediction
             # change the confidence to a new value
             selected_new_confidence = _select_random_confidence(granular_confidence)
+            while confidence == selected_new_confidence:
+                selected_new_confidence = _select_random_confidence(granular_confidence)
             try:
                 updated_generated_texts.append(
                     _replace_confidence_value_in_text(
@@ -222,3 +224,33 @@ def overwrite_confidence(
             updated_generated_texts.append(generated_texts[idx])
 
     return updated_generated_texts
+
+
+def handle_random_confidence_replacement(
+    tokenizer: transformers.PreTrainedTokenizer,
+    generated_texts: list[str],
+    generated_confidence_values: list[int | None],
+    device: torch.device,
+    granular_confidence: bool,
+) -> tuple[list[torch.Tensor], list[str], list[int | None], list[int | None], list[bool]]:
+    old_generated_confidence_values = generated_confidence_values.copy()
+    generated_texts = overwrite_confidence(
+        generated_texts, generated_confidence_values, granular_confidence=granular_confidence
+    )
+    generated_ids = []
+    for text in generated_texts:
+        ids = t.cast(torch.Tensor, tokenizer.encode(text, return_tensors="pt"))
+        generated_ids.append(ids.squeeze(0).to(device=device))
+    generated_confidence_values = response.parse_confidences(generated_texts, granular_confidence)
+    is_confidence_randomly_replaced = [
+        old_conf != new_conf
+        for old_conf, new_conf in zip(old_generated_confidence_values, generated_confidence_values)
+    ]
+
+    return (
+        generated_ids,
+        generated_texts,
+        generated_confidence_values,
+        old_generated_confidence_values,
+        is_confidence_randomly_replaced,
+    )

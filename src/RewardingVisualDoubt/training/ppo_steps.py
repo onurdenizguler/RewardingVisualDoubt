@@ -125,7 +125,7 @@ def radialog_binary_qa_ppo_training_step(
             generated_confidence_values,
             old_generated_confidence_values,
             is_confidence_randomly_replaced,
-        ) = handle_random_confidence_replacement(
+        ) = postprocessing.handle_random_confidence_replacement(
             tokenizer,
             generated_texts,
             generated_confidence_values,
@@ -242,15 +242,16 @@ def generate_reports(
     print("Generating reports...")
     model.eval()
     model.gradient_checkpointing_disable()
-    generated_ids = ppo_trainer.generate(
-        query_tensor=input_ids_list,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
-        images=images,
-        return_prompt=False,
-        batch_size=input_ids.shape[0],
-        use_cache=True,
-        stopping_criteria=[stopping_criteria],
-        **generation_kwargs,
-    )
+    with torch.inference_mode():
+        generated_ids = ppo_trainer.generate(
+            query_tensor=input_ids_list,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
+            images=images,
+            return_prompt=False,
+            batch_size=input_ids.shape[0],
+            use_cache=True,
+            stopping_criteria=[stopping_criteria],
+            **generation_kwargs,
+        )
     return generated_ids
 
 
@@ -347,7 +348,6 @@ def radialog_report_generation_ppo_training_step(
     )
 
     ######### 5.2 Generate the reports #########
-    print("Generating reports...")
     generated_ids = generate_reports(
         model,
         ppo_trainer,
@@ -371,25 +371,25 @@ def radialog_report_generation_ppo_training_step(
         granular_confidence=granular_confidence,
     )
 
-    old_generated_confidence_values = generated_confidence_values.copy()
+    generated_confidence_values_after_replacement = generated_confidence_values.copy()
     is_confidence_randomly_replaced = [False] * len(generated_confidence_values)
 
     ############# 5.4 Handle random confidence replacement #########
 
-    # if random.random() < chance_to_change_confidence:  # Replace with random confidence
-    #     (
-    #         generated_ids,
-    #         generated_texts,
-    #         generated_confidence_values,
-    #         old_generated_confidence_values,
-    #         is_confidence_randomly_replaced,
-    #     ) = _handle_random_confidence_replacement(
-    #         tokenizer,
-    #         generated_texts,
-    #         generated_confidence_values,
-    #         device=device,
-    #         granular_confidence=granular_confidence,
-    #     )
+    if random.random() < chance_to_change_confidence:  # Replace with random confidence
+        (
+            generated_ids,
+            generated_texts,
+            generated_confidence_values_after_replacement,
+            generated_confidence_values,
+            is_confidence_randomly_replaced,
+        ) = postprocessing.handle_random_confidence_replacement(
+            tokenizer,
+            generated_texts,
+            generated_confidence_values,
+            device=device,
+            granular_confidence=granular_confidence,
+        )
 
     ########## 5.5 Fetch GREEN scores for the generated reports #########
     print("Fetching GREEN scores for the generated reports...")
@@ -406,7 +406,7 @@ def radialog_report_generation_ppo_training_step(
             granular_confidence=False,
             config=reward_config,
         )
-        for confidence, accuracy in zip(generated_confidence_values, green_scores)
+        for confidence, accuracy in zip(generated_confidence_values_after_replacement, green_scores)
     ]
 
     scores = t.cast(
@@ -441,8 +441,8 @@ def radialog_report_generation_ppo_training_step(
     )
 
     post_optimization_assets = create_post_ppo_optimization_assets(
-        generated_confidence_values=old_generated_confidence_values,
-        generated_confidence_values_after_replacement=generated_confidence_values,
+        generated_confidence_values=generated_confidence_values,
+        generated_confidence_values_after_replacement=generated_confidence_values_after_replacement,
         is_confidence_randomly_replaced=is_confidence_randomly_replaced,
         generated_texts=generated_texts,
         ppo_responses=ppo_responses,
@@ -456,36 +456,6 @@ def radialog_report_generation_ppo_training_step(
 #####################################################################################################################
 # HELPER FUNCTIONS
 #####################################################################################################################
-
-
-def handle_random_confidence_replacement(
-    tokenizer: transformers.PreTrainedTokenizer,
-    generated_texts: list[str],
-    generated_confidence_values: list[int | None],
-    device: torch.device,
-    granular_confidence: bool,
-) -> tuple[list[torch.Tensor], list[str], list[int | None], list[int | None], list[bool]]:
-    old_generated_confidence_values = generated_confidence_values.copy()
-    generated_texts = postprocessing.overwrite_confidence(
-        generated_texts, generated_confidence_values, granular_confidence=granular_confidence
-    )
-    generated_ids = []
-    for text in generated_texts:
-        ids = t.cast(torch.Tensor, tokenizer.encode(text, return_tensors="pt"))
-        generated_ids.append(ids.squeeze(0).to(device=device))
-    generated_confidence_values = response.parse_confidences(generated_texts, granular_confidence)
-    is_confidence_randomly_replaced = [
-        old_conf != new_conf
-        for old_conf, new_conf in zip(old_generated_confidence_values, generated_confidence_values)
-    ]
-
-    return (
-        generated_ids,
-        generated_texts,
-        generated_confidence_values,
-        old_generated_confidence_values,
-        is_confidence_randomly_replaced,
-    )
 
 
 def prepare_ppo_queries_and_responses_from_reformulated_query_and_responses(
@@ -548,8 +518,8 @@ def create_post_ppo_optimization_assets(
     return logging.ReportGenerationPostPPOOptimizationAssetsBatch(
         scores=scores,
         green_scores=green_scores,
-        generated_confidence_values=generated_confidence_values_after_replacement,
-        generated_confidence_values_after_replacement=generated_confidence_values,
+        generated_confidence_values=generated_confidence_values,
+        generated_confidence_values_after_replacement=generated_confidence_values_after_replacement,
         is_confidence_randomly_replaced=is_confidence_randomly_replaced,
         generated_texts=generated_texts,
         ppo_responses=ppo_responses,
