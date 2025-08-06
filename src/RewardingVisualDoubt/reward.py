@@ -108,16 +108,16 @@ def generated_answer_and_confidence_to_reward(
 
 Scaling = t.Literal["shifted", "centered", "tanh", "logistic"]
 
-WRONG_FORMAT_PENALTY: float = -1.0  # returned when inputs are None or invalid
+WRONG_FORMAT_PENALTY_REPORT_GENERATION: float = -3.0  # returned when inputs are None or invalid
 
 
 @dataclasses.dataclass(frozen=True)
 class RewardConfig:
-    scaling: Scaling = "shifted"  # "shifted" | "centered" | "tanh" | "logistic"
+    scaling: Scaling = "shifted"
     eps: float = 1e-6  # clipping constant (avoid log(0))
     scale: float = 1.0  # final multiplicative scale
     squash_scale: t.Optional[float] = (
-        None  # if None, default uses 1 / log(2) so the inflection is at the coin-flip point for smooth squashes ("tanh" / "logistic") else, the effective slope is 1/squash_scale.
+        None  # if None, default uses 1 / log(2) so the inflection is at the coin-flip point (Reward = -log(2)) for smooth squashes ("tanh" / "logistic") else, the effective slope is 1/squash_scale.
     )
 
 
@@ -170,14 +170,6 @@ def scaled_normalized_log_likelihood_reward(
     Configurable reward for Bernoulli targets using log-likelihood shaped into [-1, 1],
     then scaled by `config.scale`.
 
-    Inputs
-    ------
-    confidence: int | None
-        - confidence value (0-10) or (0-100) or None if not available
-    accuracy: float | None
-        - accuracy value (0.0-1.0) or None if not available
-    granular_confidence: bool
-        - whether the confidence is granular (0-10) or not (0-100)
     config : RewardConfig
         - scaling:   "shifted"  -> linear min-max to [-1, 1]
                       "centered" -> piecewise linear s.t. R_min -> -1, coin-flip -> 0, best -> +1
@@ -186,15 +178,10 @@ def scaled_normalized_log_likelihood_reward(
         - eps:       small clip to keep logs finite
         - scale:     final multiplicative scale
         - squash_scale: optional slope control for smooth variants
-
-    Returns
-    -------
-    float
-        Scaled reward. Returns WRONG_FORMAT_PENALTY on invalid inputs.
     """
 
     if confidence is None or accuracy is None:
-        return WRONG_FORMAT_PENALTY * config.scale
+        return WRONG_FORMAT_PENALTY_REPORT_GENERATION * config.scale
 
     normalized_confidence = normalize_confidence(confidence, granular_confidence, clipped=False)
     p_hat = normalized_confidence
@@ -204,8 +191,30 @@ def scaled_normalized_log_likelihood_reward(
 
     R_min = math.log(config.eps)  # worst-case (after clipping)
     R0 = -math.log(2.0)  # coin-flip (uninformative)
-    R_max = math.log(1 - config.eps)  # best case (perfect prediction)
+    R_max = 0  # math.log(1 - config.eps)  # best case (perfect prediction)
 
     shaped = normalize_and_scale_reward(raw_reward, R0, R_min, R_max, config)
 
     return float(config.scale * shaped)
+
+
+def get_max_and_min_reward(
+    reward_function: t.Callable,
+    granular_confidence: bool = False,
+    config: RewardConfig = RewardConfig(),
+) -> tuple[float, float]:
+    """
+    Get the maximum possible reward for a given reward function.
+    """
+    if granular_confidence:
+        max_confidence = shared.POSSIBLE_GRANULAR_CONFIDENCES[-1]
+    else:
+        max_confidence = shared.POSSIBLE_CONFIDENCES[-1]
+
+    # Assuming perfect accuracy (1.0)
+    max_reward = reward_function(max_confidence, 1.0, granular_confidence, config)
+
+    # Assuming worst-case accuracy (0.0)
+    min_reward = reward_function(max_confidence, 0.0, granular_confidence, config)
+
+    return max_reward, min_reward
