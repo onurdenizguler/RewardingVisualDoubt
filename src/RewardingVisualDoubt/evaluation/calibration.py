@@ -13,27 +13,13 @@ class RewardECEAndDistributionScore:
     avg_reward: float
 
 
-# def reward_ece_and_distribution_score_heuristic(
-#     reward_ece_and_distribution_score: RewardECEAndDistributionScore,
-#     alpha: float = 1.0,
-#     beta: float = 1.0,
-#     theta: float = 0.0,
-# ) -> float:
-
-#     return (
-#         -reward_ece_and_distribution_score.ece * alpha
-#         - reward_ece_and_distribution_score.conf_distribution_kl_divergence * beta
-#         + reward_ece_and_distribution_score.avg_reward * theta
-#     )
-
-
 def reward_ece_and_distribution_score_heuristic(
     reward_ece_and_distribution_score: RewardECEAndDistributionScore,
     n_bins: int,
     r_max_and_r_min: tuple[float, float],
-    w_ece: float = 0.4,
-    w_kl: float = 0.4,
-    w_reward: float = 0.2,
+    w_ece: float = 0.33,
+    w_kl: float = 0.34,
+    w_reward: float = 0.33,
 ) -> float:
     """Returns a scalar in [0, 1]; higher = better."""
     r_max, r_min = r_max_and_r_min
