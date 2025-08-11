@@ -148,7 +148,9 @@ def normalize_and_scale_reward(
         case "tanh" | "logistic":
             # Smooth, monotone squashes centred at the coin-flip point.
             # We first shift so that coin-flip is at 0, then apply a squash.
+
             x = R - R0  # now x=0 at coin-flip (R = R0)
+
             if config.squash_scale is None:
                 # default slope so that the characteristic scale matches log(2)
                 alpha = 1.0 / math.log(2.0)
