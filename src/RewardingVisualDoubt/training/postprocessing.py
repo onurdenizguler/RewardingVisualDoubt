@@ -34,6 +34,7 @@ def remove_padding(tensor, pad_token) -> torch.Tensor:
     return trimmed_tensor
 
 
+# TODO: Change name to "preceding", add return typehinting
 def remove_preciding_padding_from_batch_tensor(batch: torch.Tensor):
     trimmed_sequences = []
     for seq in batch:
@@ -46,7 +47,6 @@ def remove_preciding_padding_from_batch_tensor(batch: torch.Tensor):
         else:
             raise Exception("Error at remove_preciding_padding_from_batch_tensor")
 
-    # If you want to pad back to the same length (optional):
     return trimmed_sequences
 
 
@@ -147,9 +147,17 @@ def reformulate_query_and_response(
 def remove_confidence_part_from_generated_responses(responses: list[str]) -> list[str]:
     confidence_stripped_generated_responses = []
     for response in responses:
-        confidence_stripped_generated_responses.append(
-            response.split(("confidence"))[0][:-2].strip()
-        )  # Remove the confidence part from the generated response
+        if "confidence" in response:
+            if len(response.split(("confidence"))[0]) > 2:
+                confidence_stripped_generated_responses.append(
+                    response.split(("confidence"))[0][:-2].strip()
+                )
+            else:
+                confidence_stripped_generated_responses.append(
+                    response.split(("confidence"))[0].strip()
+                )
+        else:
+            confidence_stripped_generated_responses.append(response.strip())
     return confidence_stripped_generated_responses
 
 
