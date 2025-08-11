@@ -5,23 +5,24 @@ training_metaparameters:
   out_dir: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models"
   perform_validation_before_starting_training: false
   n_training_batches_to_skip: 0
-  num_batches_to_evaluate: 0
-  save_training_model_every_n_checkpoints: 3
-  plot_confidence_calibration_for_training_batches_every_n_batch: 4
+  num_batches_to_evaluate: 2 #0
+  save_training_model_every_n_checkpoints: 1 #3
+  plot_confidence_calibration_for_training_batches_every_n_batch: 1 #4
 
 report_generation_ppo_hyperparameters:
   num_epochs: 1
-  steps_until_checkpoint: 15
-  gradient_accumulation_steps: 3
-  batch_size: 12
+  steps_until_checkpoint: 2 #15
+  gradient_accumulation_steps: 1 # 3
+  batch_size: 4 #12
   mini_batch_size: 4
-  learning_rate: 1e-5
+  learning_rate: 1.0e-5
   chance_to_change_confidence: 0.4
   # Reward related hyperparameters might be overwritten in reward tuning process
   reward_function: "RewardingVisualDoubt.reward.scaled_normalized_log_likelihood_reward"
+  reward_ece_and_distribution_score_heuristic: "RewardingVisualDoubt.evaluation.calibration.reward_ece_and_distribution_score_heuristic"
   reward_config:
     scaling: "shifted"
-    eps: 1e-2
+    eps: 1.0e-2
     scale: 5.0
     squash_scale: null
   granular_confidence: false
