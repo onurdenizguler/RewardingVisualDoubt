@@ -1,12 +1,9 @@
-import dataclasses
-import datetime
 import functools
 import itertools
-import os
+import random
 import time
 import typing as t
 
-import accelerate
 import numpy as np
 import trl
 import wandb
@@ -45,7 +42,8 @@ def train(
     model.config.padding_side = "left"
 
     print("Starting the llama server...")
-    green.start_llama_server(quantization=green.Quantization.Q4_K_M)
+    if not green.is_server_alive():
+        green.start_llama_server(quantization=green.Quantization.Q4_K_M)
     while not green.is_server_alive():
         time.sleep(1)
 
@@ -129,7 +127,7 @@ def train(
         "eos_token_id": tokenizer.eos_token_id,
     }
 
-    ########################################## 4. Get trainer and set training aspirations and setup the llama.cpp environment ########################################
+    ########################################## 4. Get trainer and initialize the wandb tracker ########################################
 
     ppo_trainer = t.cast(
         training.MultimodalPPOTrainer,
@@ -150,33 +148,25 @@ def train(
 
     ######################################## 5. Train the model ######################################################################################################
 
-    mean_score_train: float = -float("inf")
-
-    conf_distribution_kl_eval: float = float("inf")
-    mean_score_eval: float = -float("inf")
-    ece_eval: float = 1.0
-    reward_ece_and_distribution_kl_eval_aggregated_score: float = -float("inf")
-
-    best_mean_score_eval: float = -float("inf")
-    best_ece_eval: float = 1.0
-    best_conf_distribution_kl_eval: float = float("inf")
-    best_reward_ece_and_distribution_kl_eval_aggregated_score: float = -float("inf")
-
+    kpis = training.init_training_success_kpis()
     patience = training.PatienceTracker()
     scores_until_checkpoint_train: list[float] = []
     accumulating_game_logs = training.create_empty_game_logs_for_report_generation()
     perform_validation_before_starting_training = (
         metaparameters.perform_validation_before_starting_training
     )
-
     heuristic_fn: t.Callable[
         [evaluation.RewardECEAndDistributionScore, int, tuple[float, float]], float
     ] = hyperparameters.reward_ece_and_distribution_score_heuristic
+    random_number_generator = random.Random(53355335)
+
     for epoch in range(hyperparameters.num_epochs):
 
         for step in tqdm(
             range(len(dataloader_train) - metaparameters.n_training_batches_to_skip),
             desc=f"Taking training steps... Epoch {epoch+1}/{hyperparameters.num_epochs}",
+            file=sys.stderr,
+            dynamic_ncols=True,
         ):
             if not perform_validation_before_starting_training:
 
@@ -192,6 +182,7 @@ def train(
                     batch,
                     hyperparameters.reward_function,
                     hyperparameters.reward_config,
+                    random_number_generator,
                     chance_to_change_confidence=hyperparameters.chance_to_change_confidence,
                     granular_confidence=hyperparameters.granular_confidence,
                 )
@@ -203,7 +194,6 @@ def train(
                     device=device,
                     tokenizer=tokenizer,
                     batch=batch,
-                    ppo_trainer=ppo_trainer,
                     hyperparameters=hyperparameters,
                     accumulating_game_logs=accumulating_game_logs,
                     log_calibration_plot=(
@@ -222,27 +212,26 @@ def train(
 
                 if not perform_validation_before_starting_training:
 
-                    mean_score_train = float(np.mean(scores_until_checkpoint_train))
+                    kpis.mean_score_train.append(float(np.mean(scores_until_checkpoint_train)))
                     print(
-                        f"Arrived at checkpoint {step + 1}. Average training score: {mean_score_train}"
+                        f"Arrived at checkpoint {step + 1}. Average training score: {kpis.mean_score_train[-1]}"
                     )
                     if (step + 1) % (
                         hyperparameters.steps_until_checkpoint
                         * metaparameters.save_training_model_every_n_checkpoints
                     ) == 0:
                         print("Saving the model checkpoint...")
-                        # Create dir if it does not exist
-                        save_dir = os.path.join(
+                        training.save_training_checkpoint_lora_adapters_and_value_head_to_dir(
+                            ppo_trainer,
+                            epoch,
+                            step,
                             metaparameters.out_dir,
                             metaparameters.name_of_fine_tuning,
-                            datetime.datetime.now().strftime("%Y-%m-%d"),
-                            f"checkpoint-{step + 1}",
+                            hyperparameters.reward_config,
                         )
-                        os.makedirs(save_dir, exist_ok=True)
-                        ppo_trainer.save_pretrained(
-                            save_dir,
-                        )
-                    wandb.log({"mean_score_training_checkpoint": mean_score_train}, step=step + 1)
+                    wandb.log(
+                        {"mean_score_training_checkpoint": kpis.mean_score_train}, step=step + 1
+                    )
                     scores_until_checkpoint_train = []
 
                 model.eval()
@@ -256,6 +245,8 @@ def train(
                         else len(dataloader_eval)
                     ),
                     desc=f"Running evaluation at checkpoint {step + 1}",
+                    file=sys.stderr,
+                    dynamic_ncols=True,
                 ):
                     try:
                         eval_batch = next(eval_batch_iterator)
@@ -280,81 +271,42 @@ def train(
                     batch_generated_confidence_values_list_eval.extend(generated_confidence_values)
                     batch_green_scores_list_eval.extend(green_scores)
 
-                ece_eval, conf_distribution_kl_eval, mean_score_eval, _ = (
-                    training.log_eval_metrics_for_report_generation_ppo(
-                        step + 1,
-                        batch_generated_confidence_values_list_eval,
-                        batch_scores_list_eval,
-                        batch_green_scores_list_eval,
-                        hyperparameters,
-                    )
+                (
+                    ece_eval,
+                    conf_distribution_kl_eval,
+                    mean_score_eval,
+                    heuristic_aggregated_score_eval,
+                ) = training.log_eval_metrics_for_report_generation_ppo(
+                    step + 1,
+                    batch_generated_confidence_values_list_eval,
+                    batch_scores_list_eval,
+                    batch_green_scores_list_eval,
+                    hyperparameters,
+                    heuristic_fn,
                 )
 
-                reward_ece_and_distribution_score = evaluation.RewardECEAndDistributionScore(
-                    ece=ece_eval,
-                    conf_distribution_kl_divergence=conf_distribution_kl_eval,
-                    avg_reward=mean_score_eval,
-                )
-                reward_ece_and_distribution_kl_eval_aggregated_score = heuristic_fn(
-                    reward_ece_and_distribution_score,
-                    (
-                        len(shared.POSSIBLE_GRANULAR_CONFIDENCES)
-                        if hyperparameters.granular_confidence
-                        else len(shared.POSSIBLE_CONFIDENCES)
-                    ),
-                    reward.get_max_and_min_reward(
-                        hyperparameters.reward_function,
-                        hyperparameters.granular_confidence,
-                        hyperparameters.reward_config,
-                    ),
-                )
-                wandb.log(
-                    {
-                        "reward_ece_and_distribution_kl_aggregated_score_eval": reward_ece_and_distribution_kl_eval_aggregated_score,
-                        "step": step + 1,
-                    }
-                )
-
-                if (
-                    reward_ece_and_distribution_kl_eval_aggregated_score
-                    > best_reward_ece_and_distribution_kl_eval_aggregated_score
-                ):
-                    best_reward_ece_and_distribution_kl_eval_aggregated_score = (
-                        reward_ece_and_distribution_kl_eval_aggregated_score
-                    )
-
-                if mean_score_eval > best_mean_score_eval:
-                    best_mean_score_eval = mean_score_eval
-
-                if ece_eval < best_ece_eval:
-                    best_ece_eval = ece_eval
-
-                if conf_distribution_kl_eval < best_conf_distribution_kl_eval:
-                    best_conf_distribution_kl_eval = conf_distribution_kl_eval
+                kpis.ece_eval.append(ece_eval)
+                kpis.conf_distribution_kl_eval.append(conf_distribution_kl_eval)
+                kpis.mean_score_eval.append(mean_score_eval)
+                kpis.heuristic_aggregated_score_eval.append(heuristic_aggregated_score_eval)
 
                 decision_to_break = training.report_generation_ppo_decision_to_break(
                     step=step + 1,
                     patience=patience,
-                    reward_ece_and_distribution_score=evaluation.RewardECEAndDistributionScore(
-                        ece=ece_eval,
-                        conf_distribution_kl_divergence=conf_distribution_kl_eval,
-                        avg_reward=mean_score_eval,
-                    ),
-                    best_reward_ece_and_distribution_kl_eval_aggregated_score=best_reward_ece_and_distribution_kl_eval_aggregated_score,
+                    heuristic_aggregated_scores=kpis.heuristic_aggregated_score_eval,
                     hyperparameters=hyperparameters,
-                    heuristics_fn=heuristic_fn,
                 )
 
                 if not perform_validation_before_starting_training:
-                    if mean_score_eval > best_mean_score_eval:
+                    if kpis.mean_score_eval[-1] > max(kpis.mean_score_eval):
                         training.save_best_eval_lora_adapters_and_value_head_to_dir(
                             ppo_trainer,
                             epoch,
                             step + 1,
                             metaparameters.out_dir,
                             metaparameters.name_of_fine_tuning,
+                            reward_config=hyperparameters.reward_config,
                         )
-                        best_mean_score_eval = mean_score_eval
 
                 perform_validation_before_starting_training = False
 
@@ -364,14 +316,48 @@ def train(
         if decision_to_break:
             break
 
+    wandb.finish()
+
     return training.ReportGenerationRunFinalMetrics(
-        mean_score_train_at_last_checkpoint=mean_score_train,
-        last_mean_score_eval=mean_score_eval,
-        last_ece_eval=ece_eval,
-        last_conf_distribution_kl_eval=conf_distribution_kl_eval,
-        last_ece_and_conf_distribution_kl_eval=reward_ece_and_distribution_kl_eval_aggregated_score,
-        best_mean_score_eval=best_mean_score_eval,
-        best_ece_eval=best_ece_eval,
-        best_conf_distribution_kl_eval=best_conf_distribution_kl_eval,
-        best_ece_and_conf_distribution_kl_eval=best_reward_ece_and_distribution_kl_eval_aggregated_score,
+        mean_score_train_at_last_checkpoint=kpis.mean_score_train[-1],
+        last_mean_score_eval=kpis.mean_score_eval[-1],
+        last_ece_eval=kpis.ece_eval[-1],
+        last_conf_distribution_kl_eval=kpis.conf_distribution_kl_eval[-1],
+        last_ece_and_conf_distribution_kl_eval=kpis.heuristic_aggregated_score_eval[-1],
+        best_mean_score_eval=max(kpis.mean_score_eval),
+        best_ece_eval=max(kpis.ece_eval),
+        best_conf_distribution_kl_eval=max(kpis.conf_distribution_kl_eval),
+        best_ece_and_conf_distribution_kl_eval=max(kpis.heuristic_aggregated_score_eval),
     )
+
+
+if __name__ == "__main__":
+    import argparse, pickle, sys
+    from pathlib import Path
+
+    TRIAL_DIR = Path(
+        "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/logs/radialog_report_generation_ppo_training/trials"
+    )
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--spec", required=True, help="Path to pickle with metaparameters & hyperparameters"
+    )
+    args = parser.parse_args()
+
+    with open(args.spec, "rb") as f:
+        payload = pickle.load(f)
+
+    metaparameters: training.TrainingMetaParameters = payload["metaparameters"]
+    hyperparameters: training.ReportGenerationPPOHyperparameters = payload["hyperparameters"]
+
+    # Run training (new process → fresh CUDA context)
+    result = train(metaparameters, hyperparameters)
+
+    run_hash = training.create_hash_out_of_parameters(metaparameters, hyperparameters)
+    pkl_dir = TRIAL_DIR / "final_metrics"
+    pkl_dir.mkdir(parents=True, exist_ok=True)
+    pkl_path = pkl_dir / f"final_metrics_{run_hash}.pkl"
+
+    with open(pkl_path, "wb") as f:
+        pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)
