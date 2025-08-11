@@ -239,7 +239,6 @@ def generate_reports(
     generation_kwargs: dict,
 ) -> list[torch.Tensor]:
 
-    print("Generating reports...")
     model.eval()
     model.gradient_checkpointing_disable()
     with torch.inference_mode():
@@ -303,7 +302,6 @@ def radialog_report_generation_ppo_evaluation_step(
     )
 
     ########## 5.5 Fetch GREEN scores for the generated reports #########
-    print("Fetching GREEN scores for the generated reports...")
     green_scores = green.get_green_score_for_batch_of_generated_reports(
         generated_reports=confidence_stripped_generated_texts, gt_reports=gt_reports_list
     )
@@ -332,6 +330,7 @@ def radialog_report_generation_ppo_training_step(
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
     reward_function: t.Callable[..., float],
     reward_config: reward.RewardConfig,
+    random_number_generator: random.Random,
     chance_to_change_confidence: float = 0.5,  # Default value: every 2nd batch
     granular_confidence: bool = False,
 ) -> logging.ReportGenerationPostPPOOptimizationAssetsBatch:
@@ -376,7 +375,9 @@ def radialog_report_generation_ppo_training_step(
 
     ############# 5.4 Handle random confidence replacement #########
 
-    if random.random() < chance_to_change_confidence:  # Replace with random confidence
+    if (
+        random_number_generator.random() < chance_to_change_confidence
+    ):  # Replace with random confidence
         (
             generated_ids,
             generated_texts,
@@ -392,7 +393,6 @@ def radialog_report_generation_ppo_training_step(
         )
 
     ########## 5.5 Fetch GREEN scores for the generated reports #########
-    print("Fetching GREEN scores for the generated reports...")
     green_scores = green.get_green_score_for_batch_of_generated_reports(
         generated_reports=confidence_stripped_generated_texts, gt_reports=gt_reports_list
     )
@@ -425,7 +425,6 @@ def radialog_report_generation_ppo_training_step(
     ]
 
     ########## 5.8 Take a PPO optimization step #########
-    print("Taking a PPO optimization step...")
     ppo_queries, ppo_responses = (
         prepare_ppo_queries_and_responses_from_reformulated_query_and_responses(
             reformulated_query_and_responses=reformulated_query_and_responses
