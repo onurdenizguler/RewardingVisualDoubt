@@ -2,6 +2,8 @@ import dataclasses
 import datetime
 import typing as t
 
+import hashlib
+import json
 import numpy as np
 import torch
 import transformers
@@ -279,19 +281,15 @@ def _prepare_table_and_plots_for_report_generation(
 
     if log_calibration_plot:
         try:
-            post_optimization_assets.stats["confidence_calibration_last_500_samples"] = wandb.Image(
-                evaluation.plot_calibration_curve(
-                    confidences=truncated_accumulating_game_logs["confidences"],
-                    accuracies=truncated_accumulating_game_logs["accuracies"],
+            for window in [50, 100, 500]:
+                post_optimization_assets.stats[f"confidence_calibration_last_{window}_samples"] = (
+                    wandb.Image(
+                        evaluation.plot_calibration_curve(
+                            confidences=accumulating_game_logs["confidences"][-window:],
+                            accuracies=accumulating_game_logs["accuracies"][-window:],
+                        )
+                    )
                 )
-            )
-            post_optimization_assets.stats["confidence_calibration_all_samples"] = wandb.Image(
-                evaluation.plot_calibration_curve(
-                    confidences=accumulating_game_logs["confidences"],
-                    accuracies=accumulating_game_logs["accuracies"],
-                )
-            )
-
         except:
             pass
 
@@ -307,65 +305,45 @@ def _log_training_heuristics(
     hyperparameters: parameters.ReportGenerationPPOHyperparameters,
     truncated_accumulating_game_logs: GameLogsForReportGeneration,
 ):
-    ece_100, conf_distribution_kl_100, mean_score_100, std_score_100 = calculate_kpi_metrics(
-        generated_confidence_values_list=truncated_accumulating_game_logs["confidences"][-100:],
-        scores_list=truncated_accumulating_game_logs["scores"][-100:],
-        green_scores_list=truncated_accumulating_game_logs["accuracies"][-100:],
-        hyperparameters=hyperparameters,
-    )
 
-    ece_500, conf_distribution_kl_500, mean_score_500, std_score_500 = calculate_kpi_metrics(
-        generated_confidence_values_list=truncated_accumulating_game_logs["confidences"][-500:],
-        scores_list=truncated_accumulating_game_logs["scores"][-500:],
-        green_scores_list=truncated_accumulating_game_logs["accuracies"][-500:],
-        hyperparameters=hyperparameters,
-    )
+    for window in [50, 100, 500]:
 
-    wandb.log({"mean_score_train_last_100": mean_score_100}, step=step)
-    wandb.log({"std_score_train_last_100": std_score_100}, step=step)
-    wandb.log({"ece_train_last_100": ece_100}, step=step)
-    wandb.log({"conf_distribution_kl_train_last_100": conf_distribution_kl_100}, step=step)
-    wandb.log(
-        {
-            "aggregated_ece_and_conf_distribution_kl_train_last_100": evaluation.reward_ece_and_distribution_score_heuristic(
-                reward_ece_and_distribution_score=evaluation.RewardECEAndDistributionScore(
-                    ece=ece_100,
-                    conf_distribution_kl_divergence=conf_distribution_kl_100,
-                    avg_reward=mean_score_100,
-                ),
-                n_bins=11 if not hyperparameters.granular_confidence else 101,
-                r_max_and_r_min=reward.get_max_and_min_reward(
-                    hyperparameters.reward_function,
-                    hyperparameters.granular_confidence,
-                    hyperparameters.reward_config,
-                ),
-            )
-        },
-        step=step,
-    )
+        (
+            ece,
+            conf_distribution_kl,
+            mean_score,
+            std_score,
+        ) = calculate_kpi_metrics(
+            generated_confidence_values_list=truncated_accumulating_game_logs["confidences"][
+                -window:
+            ],
+            scores_list=truncated_accumulating_game_logs["scores"][-window:],
+            green_scores_list=truncated_accumulating_game_logs["accuracies"][-window:],
+            hyperparameters=hyperparameters,
+        )
 
-    wandb.log({"mean_score_train_last_500": mean_score_500}, step=step)
-    wandb.log({"std_score_train_last_500": std_score_500}, step=step)
-    wandb.log({"ece_train_last_500": ece_500}, step=step)
-    wandb.log({"conf_distribution_kl_train_last_500": conf_distribution_kl_500}, step=step)
-    wandb.log(
-        {
-            "aggregated_ece_and_conf_distribution_kl_train_last_500": evaluation.reward_ece_and_distribution_score_heuristic(
-                reward_ece_and_distribution_score=evaluation.RewardECEAndDistributionScore(
-                    ece=ece_500,
-                    conf_distribution_kl_divergence=conf_distribution_kl_500,
-                    avg_reward=mean_score_500,
-                ),
-                n_bins=11 if not hyperparameters.granular_confidence else 101,
-                r_max_and_r_min=reward.get_max_and_min_reward(
-                    hyperparameters.reward_function,
-                    hyperparameters.granular_confidence,
-                    hyperparameters.reward_config,
-                ),
-            )
-        },
-        step=step,
-    )
+        wandb.log({f"mean_score_train_last_{window}": mean_score}, step=step)
+        wandb.log({f"std_score_train_last_{window}": std_score}, step=step)
+        wandb.log({f"ece_train_last_{window}": ece}, step=step)
+        wandb.log({f"conf_distribution_kl_train_last_{window}": conf_distribution_kl}, step=step)
+        wandb.log(
+            {
+                f"heuristic_aggregated_score_train_last_{window}": evaluation.reward_ece_and_distribution_score_heuristic(
+                    reward_ece_and_distribution_score=evaluation.RewardECEAndDistributionScore(
+                        ece=ece,
+                        conf_distribution_kl_divergence=conf_distribution_kl,
+                        avg_reward=mean_score,
+                    ),
+                    n_bins=11 if not hyperparameters.granular_confidence else 101,
+                    r_max_and_r_min=reward.get_max_and_min_reward(
+                        hyperparameters.reward_function,
+                        hyperparameters.granular_confidence,
+                        hyperparameters.reward_config,
+                    ),
+                )
+            },
+            step=step,
+        )
 
 
 def calculate_kpi_metrics(
@@ -398,7 +376,6 @@ def log_train_metrics_for_report_generation_ppo(
     device: torch.device,
     tokenizer: transformers.LlamaTokenizer,
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
-    ppo_trainer: llava_ppo.MultimodalPPOTrainer,
     hyperparameters: parameters.ReportGenerationPPOHyperparameters,
     accumulating_game_logs: GameLogsForReportGeneration | None = None,
     log_calibration_plot: bool = False,
@@ -466,6 +443,7 @@ def log_eval_metrics_for_report_generation_ppo(
     scores_list: list[float],
     green_scores_list: list[float | None],
     hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+    heuristic_fn: t.Callable,
 ) -> t.Tuple[
     float,
     float,
@@ -474,6 +452,26 @@ def log_eval_metrics_for_report_generation_ppo(
 ]:
     ece, conf_distribution_kl, mean_score, std_score = calculate_kpi_metrics(
         generated_confidence_values_list, scores_list, green_scores_list, hyperparameters
+    )
+
+    reward_ece_and_distribution_score = evaluation.RewardECEAndDistributionScore(
+        ece=ece,
+        conf_distribution_kl_divergence=conf_distribution_kl,
+        avg_reward=mean_score,
+    )
+
+    heuristic_aggregated_score_eval = heuristic_fn(
+        reward_ece_and_distribution_score,
+        (
+            len(shared.POSSIBLE_GRANULAR_CONFIDENCES)
+            if hyperparameters.granular_confidence
+            else len(shared.POSSIBLE_CONFIDENCES)
+        ),
+        reward.get_max_and_min_reward(
+            hyperparameters.reward_function,
+            hyperparameters.granular_confidence,
+            hyperparameters.reward_config,
+        ),
     )
 
     try:
@@ -495,8 +493,14 @@ def log_eval_metrics_for_report_generation_ppo(
     wandb.log({"std_score_eval": std_score}, step=step)
     wandb.log({"ece_eval": ece}, step=step)
     wandb.log({"conf_distribution_kl_eval": conf_distribution_kl}, step=step)
+    wandb.log(
+        {
+            "heuristic_aggregated_score_eval": heuristic_aggregated_score_eval,
+            "step": step,
+        }
+    )
 
-    return ece, conf_distribution_kl, mean_score, mean_score
+    return ece, conf_distribution_kl, mean_score, heuristic_aggregated_score_eval
 
 
 ############################################################################################################
@@ -539,29 +543,36 @@ def get_wandb_parameters_for_report_generation_ppo(
     return {
         "id": f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(hyperparameters.learning_rate, '.0e')}_{hyperparameters.chance_to_change_confidence}_{hyperparameters.reward_config.scaling}",
         "config": {
-            "date_of_training": datetime.datetime.now().strftime("%Y-%m-%d"),
-            "learning_rate": hyperparameters.learning_rate,
-            "chance_to_change_confidence": hyperparameters.chance_to_change_confidence,
-            "reward_function": hyperparameters.reward_function.__name__,
-            "reward_scaling_method": hyperparameters.reward_config.scaling,
-            "reward_eps": hyperparameters.reward_config.eps,
-            "reward_scale": hyperparameters.reward_config.scale,
-            "reward_squash_scale": hyperparameters.reward_config.squash_scale,
-            "reward_ece_and_distribution_score_heuristic": hyperparameters.reward_ece_and_distribution_score_heuristic,
-            "granular_confidence": str(hyperparameters.granular_confidence),
             "prompter": prompter.__name__,
-            "starting_llava_model_path": metaparameters.llava_model_path,
-            "starting_adapter_path": metaparameters.adapter_path,
-            "num_epochs": hyperparameters.num_epochs,
-            "perform_validation_before_starting_training": str(
-                metaparameters.perform_validation_before_starting_training
-            ),
-            "steps_until_checkpoint": hyperparameters.steps_until_checkpoint,
-            "batch_size": hyperparameters.batch_size,
-            "eval_batch_size": hyperparameters.eval_batch_size,
-            "mini_batch_size": hyperparameters.mini_batch_size,
-            "gradient_accumulation_steps": hyperparameters.gradient_accumulation_steps,
-            "num_batches_to_evaluate": metaparameters.num_batches_to_evaluate,
-            "n_training_batches_to_skip": metaparameters.n_training_batches_to_skip,
+            **dataclasses.asdict(metaparameters),
+            **dataclasses.asdict(hyperparameters),
         },
     }
+
+
+############################################################################################################
+# HASHING FOR TRIAL NAME
+############################################################################################################
+
+
+def _callable_id(fn):
+    return f"{fn.__module__}.{fn.__qualname__}" if callable(fn) else str(fn)
+
+
+def create_hash_out_of_parameters(
+    metaparameters: parameters.TrainingMetaParameters,
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+) -> str:
+    m = dataclasses.asdict(metaparameters)
+    h = dataclasses.asdict(hyperparameters)
+    # normalize non-serializables
+    if "out_dir" in m:
+        m["out_dir"] = str(m["out_dir"])
+    for k in ("reward_function", "reward_ece_and_distribution_score_heuristic"):
+        if k in h:
+            try:
+                h[k] = _callable_id(getattr(hyperparameters, k))
+            except Exception:
+                h[k] = str(h[k])
+    blob = json.dumps({"meta": m, "hps": h}, sort_keys=True).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
