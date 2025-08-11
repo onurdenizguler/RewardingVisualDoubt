@@ -403,7 +403,7 @@ def radialog_report_generation_ppo_training_step(
         reward_function(
             confidence=confidence,
             accuracy=accuracy,
-            granular_confidence=False,
+            granular_confidence=granular_confidence,
             config=reward_config,
         )
         for confidence, accuracy in zip(generated_confidence_values_after_replacement, green_scores)
