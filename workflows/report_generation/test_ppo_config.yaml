@@ -11,7 +11,7 @@ training_metaparameters:
 
 report_generation_ppo_hyperparameters:
   num_epochs: 1
-  steps_until_checkpoint: 9 #15
+  steps_until_checkpoint: 15 #15
   gradient_accumulation_steps: 3 # 3
   batch_size: 12 #12
   eval_batch_size: 18
