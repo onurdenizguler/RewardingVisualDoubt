@@ -120,6 +120,9 @@ class RewardConfig:
         None  # if None, default uses 1 / log(2) so the inflection is at the coin-flip point (Reward = -log(2)) for smooth squashes ("tanh" / "logistic") else, the effective slope is 1/squash_scale.
     )
 
+    def __str__(self) -> str:
+        return f"RewardConfig(scaling={self.scaling}, eps={self.eps}, scale={self.scale}, squash_scale={self.squash_scale})"
+
 
 def raw_log_likelihood_reward(eps: float, p_hat: float, p_star: float) -> float:
     p_hat_clipped = min(max(p_hat, eps), 1.0 - eps)  # clip to avoid log(0)
