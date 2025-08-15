@@ -51,9 +51,13 @@ def build_reward_grid(base_cfg: reward.RewardConfig) -> Iterator[reward.RewardCo
     # 42 options in total
 
     scalings = ["tanh", "logistic", "shifted", "centered"]
+    NEXT_SCALINGS = ["tanh", "logistic", "shifted"]
     scale_options = [2.0, 5.0, 8.0]
+    NEXT_SCALE_OPTIONS = [1.0, 1.5, 2.0]
     eps_options = [1e-3, 1e-2, 5e-2]
+    NEXT_EPS_OPTIONS = [1e-2, 5e-2]
     squash_options = [math.log(1.2), math.log(1.3), math.log(1.4)]
+    NEXT_SQUASH_OPTIONS = [math.log(1.5), math.log(1.8), math.log(2.0)]
 
     for scaling in scalings:
         for scale in scale_options:
@@ -64,6 +68,7 @@ def build_reward_grid(base_cfg: reward.RewardConfig) -> Iterator[reward.RewardCo
                         scaling=scaling,
                         scale=scale,
                         squash_scale=squash_scale,
+                        eps=1e-3,
                         # keep eps unchanged
                     )
             else:
