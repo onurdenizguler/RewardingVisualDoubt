@@ -287,6 +287,7 @@ def _prepare_table_and_plots_for_report_generation(
                         evaluation.plot_calibration_curve(
                             confidences=accumulating_game_logs["confidences"][-window:],
                             accuracies=accumulating_game_logs["accuracies"][-window:],
+                            plot_std=True,
                         )
                     )
                 )
@@ -481,6 +482,7 @@ def log_eval_metrics_for_report_generation_ppo(
                     evaluation.plot_calibration_curve(
                         confidences=generated_confidence_values_list,
                         accuracies=green_scores_list,
+                        plot_std=True,
                     )
                 )
             },
@@ -540,8 +542,15 @@ def get_wandb_parameters_for_report_generation_ppo(
     prompter: t.Callable,
 ) -> t.Dict[str, t.Any]:
 
+    id = ""
+    if isinstance(hyperparameters.reward_config, reward.RewardConfig):
+        id = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(hyperparameters.learning_rate, '.0e')}_{hyperparameters.chance_to_change_confidence}_{hyperparameters.reward_config.scaling}"
+
+    if isinstance(hyperparameters.reward_config, reward.QuadraticBlendRewardConfig):
+        id = f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(hyperparameters.learning_rate, '.0e')}_{hyperparameters.chance_to_change_confidence}_quad_beta"
+
     return {
-        "id": f"{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M')}_{format(hyperparameters.learning_rate, '.0e')}_{hyperparameters.chance_to_change_confidence}_{hyperparameters.reward_config.scaling}",
+        "id": id,
         "config": {
             "prompter": prompter.__name__,
             **dataclasses.asdict(metaparameters),
