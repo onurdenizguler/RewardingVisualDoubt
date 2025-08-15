@@ -1,5 +1,5 @@
 training_metaparameters:
-  name_of_fine_tuning: "radialog_report_generation_reward_tuning"
+  name_of_fine_tuning: "radialog_report_generation_ppo_training"
   llava_model_path: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_with_confidence_sft_full_merged_model"
   adapter_path: null
   out_dir: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models"
@@ -16,17 +16,16 @@ report_generation_ppo_hyperparameters:
   batch_size: 12
   eval_batch_size: 18
   mini_batch_size: 4
-  learning_rate: 1.0e-5
-  chance_to_change_confidence: 0.25
+  learning_rate: 6.0e-6
+  chance_to_change_confidence: 0.33
   # Reward related hyperparameters might be overwritten in reward tuning process
-  reward_function: "RewardingVisualDoubt.reward.scaled_normalized_log_likelihood_reward"
+  reward_function: "RewardingVisualDoubt.reward.scaled_quadratic_blend_distance_reward"
   reward_ece_and_distribution_score_heuristic: "RewardingVisualDoubt.evaluation.calibration.reward_ece_and_distribution_score_heuristic"
   reward_config:
-    scaling: "tanh" # Will be replaced in reward tuning sweeps
-    eps: 1.0e-3 # Will be replaced in reward tuning sweeps
-    scale: 5.0 # Will be replaced in reward tuning sweeps
-    squash_scale: null # Will be replaced in reward tuning sweeps
+    beta: 0.0
+    scale: 5.0
+    r_max: 0.0
   granular_confidence: false
-  max_steps: 200 # Takes around 10 hours, let us not do more than that!
-  early_stopping_patience: 4 # If the trend ("slope") of the objective does not turn to positive for 4 eval checkpoints (4 hours), stop training
-  early_stopping_min_improvement: null # not relevant anymore with the new slope based early stopping
+  max_steps: null
+  early_stopping_patience: null
+  early_stopping_min_improvement: null
