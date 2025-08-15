@@ -1,6 +1,7 @@
 import functools
 import itertools
 import random
+import sys
 import time
 import typing as t
 
@@ -298,11 +299,14 @@ def train(
                 )
 
                 if not perform_validation_before_starting_training:
-                    if kpis.mean_score_eval[-1] > max(kpis.mean_score_eval):
+                    if kpis.heuristic_aggregated_score_eval[-1] >= max(
+                        kpis.heuristic_aggregated_score_eval
+                    ):
+                        print("Saving best eval model yet...")
                         training.save_best_eval_lora_adapters_and_value_head_to_dir(
                             ppo_trainer,
                             epoch,
-                            step + 1,
+                            step,
                             metaparameters.out_dir,
                             metaparameters.name_of_fine_tuning,
                             reward_config=hyperparameters.reward_config,
@@ -332,7 +336,7 @@ def train(
 
 
 if __name__ == "__main__":
-    import argparse, pickle, sys
+    import argparse, pickle
     from pathlib import Path
 
     TRIAL_DIR = Path(
