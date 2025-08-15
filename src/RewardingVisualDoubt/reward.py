@@ -223,3 +223,63 @@ def get_max_and_min_reward(
     min_reward = reward_function(max_confidence, 0.0, granular_confidence, config)
 
     return max_reward, min_reward
+
+
+########################################################################
+# Quadratic, distance-based reward
+########################################################################
+
+
+@dataclasses.dataclass(frozen=True)
+class QuadraticBlendRewardConfig:
+    beta: float = 3.0  # makes it steeper of a reward decline to get away from the peak reward.
+    scale: float = 1.0  # final multiplicative scalar applied to the shaped reward
+    r_max: float = 0.0  # reward at the peak (p_hat == p_star)
+
+    def __str__(self) -> str:
+        return (
+            f"QuadraticBlendRewardConfig(beta={self.beta}, scale={self.scale}, r_max={self.r_max})"
+        )
+
+
+def _quadratic_blend_penalty(distance: float, beta: float) -> float:
+    """
+    distance in [0, 1]; returns a penalty in [0, 1] with:
+      penalty(0) = 0, penalty(1) = 1,
+      penalty(d) = d^2 * (1 + beta * d^2) / (1 + beta).
+    """
+    d2 = distance * distance
+    return (d2 * (1.0 + beta * d2)) / (1.0 + beta)
+
+
+def quadratic_blend_reward_from_probs(
+    p_hat: float,
+    p_star: float,
+    config: QuadraticBlendRewardConfig,
+) -> float:
+    """
+    Distance-only, equal-peak reward. Returns: R = scale * ( r_max - penalty(distance) )
+    where penalty is in [0,1] and distance is defined as |p_hat - p_star|.
+    """
+
+    p_hat = min(max(p_hat, 0.0), 1.0)
+    p_star = min(max(p_star, 0.0), 1.0)
+
+    d = abs(p_hat - p_star)
+    penalty = _quadratic_blend_penalty(d, config.beta)
+    shaped = config.r_max - penalty
+    return float(config.scale * shaped)
+
+
+def scaled_quadratic_blend_distance_reward(
+    confidence: int | None,
+    accuracy: float | None,
+    granular_confidence: bool,
+    config: QuadraticBlendRewardConfig,
+) -> float:
+    if confidence is None or accuracy is None:
+        return WRONG_FORMAT_PENALTY_REPORT_GENERATION * config.scale
+
+    p_hat = normalize_confidence(confidence, granular_confidence, clipped=False)
+    p_star = float(accuracy)
+    return quadratic_blend_reward_from_probs(p_hat, p_star, config)
