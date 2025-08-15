@@ -74,7 +74,10 @@ def load_default_configs(
     ppo_dict = data["report_generation_ppo_hyperparameters"].copy()
     rf = ppo_dict["reward_function"]
     hf = ppo_dict["reward_ece_and_distribution_score_heuristic"]
-    ppo_dict["reward_config"] = reward.RewardConfig(**ppo_dict["reward_config"])
+    if rf == "RewardingVisualDoubt.reward.scaled_quadratic_blend_distance_reward":
+        ppo_dict["reward_config"] = reward.QuadraticBlendRewardConfig(**ppo_dict["reward_config"])
+    if rf == "RewardingVisualDoubt.reward.scaled_normalized_log_likelihood_reward":
+        ppo_dict["reward_config"] = reward.RewardConfig(**ppo_dict["reward_config"])
     if isinstance(rf, str):
         ppo_dict["reward_function"] = load_callable(rf)
     if isinstance(hf, str):
