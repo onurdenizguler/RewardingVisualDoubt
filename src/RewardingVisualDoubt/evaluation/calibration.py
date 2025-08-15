@@ -76,8 +76,38 @@ def binify_accuracies(
     return counts, avg_acc
 
 
+def binify_accuracies_with_std(
+    confidences: list[int | None],
+    accuracies: list[bool] | list[float | None],
+) -> None | tuple[list[int], list[float], list[float]]:
+    filtered = [(c, a) for c, a in zip(confidences, accuracies) if c is not None and a is not None]
+    if not filtered:
+        return None
+    confidences_clean, accuracies_clean = t.cast(tuple[list[int], list[float]], zip(*filtered))
+
+    bin_acc = {i: [] for i in range(11)}
+    for c, a in zip(confidences_clean, accuracies_clean):
+        if c > 10:
+            if c > 92:
+                c = 100
+            if c < 8:
+                c = 0
+            c = round(c / 10)
+        bin_acc[c].append(a)
+
+    counts = [len(bin_acc[i]) for i in range(11)]
+    avg_acc = t.cast(list[float], [np.mean(bin_acc[i]) if bin_acc[i] else 0.0 for i in range(11)])
+    std_acc = t.cast(list[float], [np.std(bin_acc[i]) if bin_acc[i] else 0.0 for i in range(11)])
+
+    return counts, avg_acc, std_acc
+
+
 def plot_calibration_curve(
-    confidences: list[None | int], accuracies: list[bool] | list[float | None]
+    confidences: list[None | int],
+    accuracies: list[bool] | list[float | None],
+    plot_std: bool = False,
+    ece: float | None = None,
+    model_name: str | None = None,
 ):
     """
     Generate a confidence calibration plot (reliability diagram).
@@ -90,25 +120,53 @@ def plot_calibration_curve(
         matplotlib.figure.Figure: The resulting plot as a matplotlib Figure.
     """
 
-    results = binify_accuracies(confidences, accuracies)
+    if plot_std:
+        results = binify_accuracies_with_std(confidences, accuracies)
+        if results:
+            (counts, avg_acc, std_acc) = results
+    else:
+        results = binify_accuracies(confidences, accuracies)
+        if results:
+            counts, avg_acc = results
+
     if not results:
         return
-    counts, avg_acc = results
 
-    # Create plot
-    fig, ax = plt.subplots(figsize=(8, 6))
-    ax.plot(range(11), avg_acc, marker="o", label="Model Accuracy")
+    if plot_std:
+
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.errorbar(
+            range(11),
+            avg_acc,
+            yerr=std_acc,
+            fmt="o-",
+            capsize=4,
+            color="C0",  # main line color (matplotlib default blue)
+            ecolor="red",  # error bar color
+            elinewidth=1,
+            alpha=0.6,  # make it faint
+            label="Model Accuracy ± Std",
+        )
+    else:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(range(11), avg_acc, marker="o", label="Model Accuracy")
+
+    title = f"Confidence Calibration Plot (Overall Accuracy: {sum(a for a in accuracies if a)/len(accuracies):.2f}, n={sum(counts)})"
+    if model_name:
+        title += "\n" + f"{model_name}"
+    if ece:
+        title += "\n ECE: " + f"{ece:.2f}"
     ax.plot([0, 10], [0.0, 1.0], "k--", label="Perfect Calibration")
-
     ax.set_xticks(range(11))
     ax.set_ylim(0.0, 1.05)
-    ax.set_xlabel("Confidence Level (0–10)")
+    ax.set_xlabel("Confidence Level (0-10)")
     ax.set_ylabel("Empirical Accuracy")
-    ax.set_title(
-        f"Confidence Calibration Plot (Overall Accuracy: {sum([accuracy for accuracy in accuracies if accuracy])/len(accuracies)})"
-    )
+    ax.set_title(title)
     ax.grid(True)
     ax.legend()
+
+    for i, (acc, count) in enumerate(zip(avg_acc, counts)):
+        ax.text(i, acc + 0.03, f"n={count}", ha="center", fontsize=8)
 
     # Annotate sample sizes
     for i, (acc, count) in enumerate(zip(avg_acc, counts)):
