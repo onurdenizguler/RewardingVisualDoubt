@@ -87,11 +87,6 @@ def train(
         num_workers=8,
     )
 
-    eval_batch_iterator = iter(dataloader_eval)
-    iterator_train = itertools.islice(
-        iter(dataloader_train), metaparameters.n_training_batches_to_skip, None
-    )
-
     ######################################## 3. Define the PPO and generation configurations ########################################
 
     ppo_config = trl.PPOConfig(
@@ -156,19 +151,23 @@ def train(
     perform_validation_before_starting_training = (
         metaparameters.perform_validation_before_starting_training
     )
-    heuristic_fn: t.Callable[
-        [evaluation.RewardECEAndDistributionScore, int, tuple[float, float]], float
-    ] = hyperparameters.reward_ece_and_distribution_score_heuristic
     random_number_generator = random.Random(53355335)
 
     for epoch in range(hyperparameters.num_epochs):
-
+        eval_batch_iterator = iter(dataloader_eval)
+        iterator_train = itertools.islice(
+            iter(dataloader_train), metaparameters.n_training_batches_to_skip, None
+        )
+        number_of_steps_per_epoch = (
+            len(dataloader_train) - metaparameters.n_training_batches_to_skip
+        )
         for step in tqdm(
-            range(len(dataloader_train) - metaparameters.n_training_batches_to_skip),
+            range(number_of_steps_per_epoch),
             desc=f"Taking training steps... Epoch {epoch+1}/{hyperparameters.num_epochs}",
             file=sys.stderr,
             dynamic_ncols=True,
         ):
+            global_step = step + (epoch * number_of_steps_per_epoch)
             if not perform_validation_before_starting_training:
 
                 batch: dataset.MimicCxrLlavaModelInputBatchDict = next(iterator_train)
@@ -190,7 +189,7 @@ def train(
 
                 scores_until_checkpoint_train += [s.item() for s in post_optimization_assets.scores]
                 training.log_train_metrics_for_report_generation_ppo(
-                    step=step + 1,
+                    step=global_step + 1,
                     post_optimization_assets=post_optimization_assets,
                     device=device,
                     tokenizer=tokenizer,
@@ -198,7 +197,7 @@ def train(
                     hyperparameters=hyperparameters,
                     accumulating_game_logs=accumulating_game_logs,
                     log_calibration_plot=(
-                        (step + 1)
+                        (global_step + 1)
                         % metaparameters.plot_confidence_calibration_for_training_batches_every_n_batch
                     )
                     == 0,  # log at every (1/n) of the checkpoint interval
@@ -206,7 +205,7 @@ def train(
 
             ######### 5.10 Checkpoint the model if checkpoint step is reached #########
             perform_eval = (
-                (step + 1) % hyperparameters.steps_until_checkpoint == 0
+                (global_step + 1) % hyperparameters.steps_until_checkpoint == 0
                 or perform_validation_before_starting_training
             )
             if perform_eval:
@@ -215,9 +214,9 @@ def train(
 
                     kpis.mean_score_train.append(float(np.mean(scores_until_checkpoint_train)))
                     print(
-                        f"Arrived at checkpoint {step + 1}. Average training score: {kpis.mean_score_train[-1]}"
+                        f"Arrived at checkpoint {global_step + 1}. Average training score: {kpis.mean_score_train[-1]}"
                     )
-                    if (step + 1) % (
+                    if (global_step + 1) % (
                         hyperparameters.steps_until_checkpoint
                         * metaparameters.save_training_model_every_n_checkpoints
                     ) == 0:
@@ -225,13 +224,14 @@ def train(
                         training.save_training_checkpoint_lora_adapters_and_value_head_to_dir(
                             ppo_trainer,
                             epoch,
-                            step,
+                            global_step,
                             metaparameters.out_dir,
                             metaparameters.name_of_fine_tuning,
                             hyperparameters.reward_config,
                         )
                     wandb.log(
-                        {"mean_score_training_checkpoint": kpis.mean_score_train}, step=step + 1
+                        {"mean_score_training_checkpoint": kpis.mean_score_train},
+                        step=global_step + 1,
                     )
                     scores_until_checkpoint_train = []
 
@@ -245,7 +245,7 @@ def train(
                         if metaparameters.num_batches_to_evaluate > 0
                         else len(dataloader_eval)
                     ),
-                    desc=f"Running evaluation at checkpoint {step + 1}",
+                    desc=f"Running evaluation at checkpoint {global_step + 1}",
                     file=sys.stderr,
                     dynamic_ncols=True,
                 ):
@@ -279,7 +279,7 @@ def train(
                     mean_score_eval,
                     heuristic_aggregated_score_eval,
                 ) = training.log_eval_metrics_for_report_generation_ppo(
-                    step + 1,
+                    global_step + 1,
                     batch_generated_confidence_values_list_eval,
                     batch_scores_list_eval,
                     batch_green_scores_list_eval,
@@ -293,7 +293,7 @@ def train(
                 kpis.weighted_mean_of_std_of_accuracies.append(weighted_mean_of_std_of_accuracies)
 
                 decision_to_break = training.report_generation_ppo_decision_to_break(
-                    step=step + 1,
+                    step=global_step + 1,
                     patience=patience,
                     heuristic_aggregated_scores=kpis.heuristic_aggregated_score_eval,
                     hyperparameters=hyperparameters,
@@ -307,7 +307,7 @@ def train(
                         training.save_best_eval_lora_adapters_and_value_head_to_dir(
                             ppo_trainer,
                             epoch,
-                            step,
+                            global_step,
                             metaparameters.out_dir,
                             metaparameters.name_of_fine_tuning,
                             reward_config=hyperparameters.reward_config,
