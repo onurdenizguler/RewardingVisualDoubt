@@ -13,6 +13,37 @@ class RewardECEAndDistributionScore:
     avg_reward: float
 
 
+def std_score_normalized_within_bin_dispersion(
+    bin_means: list[float],
+    bin_stds: list[float],
+    bin_counts: list[int] | None = None,
+    eps=1e-12,
+    equal_weight=False,
+):
+    bin_means_ = np.asarray(bin_means, dtype=float)
+    bin_stds_ = np.asarray(bin_stds, dtype=float)
+    B = len(bin_means_)
+    if bin_counts is None:
+        bin_counts_ = np.ones(B, dtype=float)
+    else:
+        bin_counts_ = np.asarray(bin_counts, dtype=float)
+
+    if equal_weight:
+        w = np.ones(B) / B
+    else:
+        w = bin_counts_ / (bin_counts_.sum() + eps)
+
+    # per-bin theoretical max std given mean
+    sigma_max = np.sqrt(np.clip(bin_means_ * (1.0 - bin_means_), 0.0, 0.25))
+    d = np.zeros(B)
+    mask = sigma_max > 0
+    d[mask] = bin_stds_[mask] / (sigma_max[mask] + eps)
+    d = np.clip(d, 0.0, 1.0)
+
+    # final metric in [0,1]
+    return float(np.sum(w * d))
+
+
 def reward_ece_and_distribution_score_heuristic(
     reward_ece_and_distribution_score: RewardECEAndDistributionScore,
     n_bins: int,
@@ -20,6 +51,7 @@ def reward_ece_and_distribution_score_heuristic(
     w_ece: float = 0.33,
     w_kl: float = 0.34,
     w_reward: float = 0.33,
+    **kwargs,
 ) -> float:
     """Returns a scalar in [0, 1]; higher = better."""
     r_max, r_min = r_max_and_r_min
@@ -33,6 +65,36 @@ def reward_ece_and_distribution_score_heuristic(
 
     score = (
         w_ece * (1.0 - ece_norm)  # small ECE → big score
+        + w_kl * (1.0 - kl_norm)  # small KL  → big score
+        + w_reward * r_norm  # large reward → big score
+    )
+    return score / (w_ece + w_kl + w_reward)  # keeps final range [0, 1]
+
+
+def accuracy_std_reward_ece_and_distribution_score_heuristic(
+    reward_ece_and_distribution_score: RewardECEAndDistributionScore,
+    n_bins: int,
+    r_max_and_r_min: tuple[float, float],
+    accuracy_std: float,
+    w_std: float = 0.25,
+    w_ece: float = 0.25,
+    w_kl: float = 0.25,
+    w_reward: float = 0.25,
+    **kwargs,
+) -> float:
+    """Returns a scalar in [0, 1]; higher = better."""
+    r_max, r_min = r_max_and_r_min
+    ece_norm = reward_ece_and_distribution_score.ece  # already 0–1
+    kl_norm = min(
+        reward_ece_and_distribution_score.conf_distribution_kl_divergence / math.log(n_bins), 1.0
+    )  # 0–1
+    r_norm = max(
+        min((reward_ece_and_distribution_score.avg_reward - r_min) / (r_max - r_min), 1.0), 0
+    )  # 0–1
+
+    score = (
+        w_std * (1.0 - accuracy_std)
+        + w_ece * (1.0 - ece_norm)  # small ECE → big score
         + w_kl * (1.0 - kl_norm)  # small KL  → big score
         + w_reward * r_norm  # large reward → big score
     )
