@@ -229,6 +229,13 @@ def radialog_binary_qa_ppo_training_step(
 ####################################################################################################################
 
 
+def round_green_scores_to_nearest_float(green_scores: list[float | None]) -> list[float | None]:
+    rounded_scores = []
+    for score in green_scores:
+        rounded_scores.append(round(score, 1) if score else score)
+    return rounded_scores
+
+
 def generate_reports(
     model: trl.AutoModelForCausalLMWithValueHead,
     ppo_trainer: llava_ppo.MultimodalPPOTrainer,
@@ -305,6 +312,7 @@ def radialog_report_generation_ppo_evaluation_step(
     green_scores = green.get_green_score_for_batch_of_generated_reports(
         generated_reports=confidence_stripped_generated_texts, gt_reports=gt_reports_list
     )
+    green_scores = round_green_scores_to_nearest_float(green_scores)
 
     ########## 5.6 Compute the scores (rewards) #########
 
@@ -396,6 +404,7 @@ def radialog_report_generation_ppo_training_step(
     green_scores = green.get_green_score_for_batch_of_generated_reports(
         generated_reports=confidence_stripped_generated_texts, gt_reports=gt_reports_list
     )
+    green_scores = round_green_scores_to_nearest_float(green_scores)
 
     ########## 5.6 Compute the scores (rewards) #########
 
@@ -432,12 +441,16 @@ def radialog_report_generation_ppo_training_step(
     )
     model.train()
     model.gradient_checkpointing_enable()
-    stats = ppo_trainer.multimodal_step(
-        queries=ppo_queries,
-        responses=ppo_responses,
-        scores=scores,
-        images=images,
-    )
+    try:
+        stats = ppo_trainer.multimodal_step(
+            queries=ppo_queries,
+            responses=ppo_responses,
+            scores=scores,
+            images=images,
+        )
+    except Exception as e:
+        print(f"FAILURE AT PPO STEP: {e}")
+        stats = {}
 
     post_optimization_assets = create_post_ppo_optimization_assets(
         generated_confidence_values=generated_confidence_values,
