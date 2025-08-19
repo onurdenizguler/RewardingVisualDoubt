@@ -5,10 +5,12 @@ import sys
 import time
 import typing as t
 
+import json
 import numpy as np
 import trl
 import wandb
 from tqdm import tqdm
+from torch.utils.data import Subset
 
 from RewardingVisualDoubt import (
     dataset,
@@ -68,6 +70,22 @@ def train(
         tokenizer=tokenizer,
         prompter=prompter_,
     )
+
+    if hyperparameters.selected_train_datapoints_json:
+        with open(hyperparameters.selected_train_datapoints_json, "r") as f:
+            datapoint_indexes: list[int] = json.load(f)
+        dataset_train = t.cast(
+            dataset.ReportGenerationPromptedMimicCxrLlavaModelInputDataset,
+            Subset(dataset_train, datapoint_indexes),
+        )
+
+    if hyperparameters.selected_eval_datapopoints_json:
+        with open(hyperparameters.selected_eval_datapopoints_json, "r") as f:
+            datapoint_indexes: list[int] = json.load(f)
+        dataset_eval = t.cast(
+            dataset.ReportGenerationPromptedMimicCxrLlavaModelInputDataset,
+            Subset(dataset_eval, datapoint_indexes),
+        )
 
     dataloader_train = dataset.get_mimic_cxr_llava_model_input_dataloader(
         dataset_train,

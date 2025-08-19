@@ -47,6 +47,8 @@ class ReportGenerationPPOHyperparameters(Parameters):
     max_steps: t.Optional[int] = None
     early_stopping_patience: t.Optional[int] = None
     early_stopping_min_improvement: float = 0.0
+    selected_train_datapoints_json: str | None = None
+    selected_eval_datapopoints_json: str | None = None
 
 
 def load_callable(path: str) -> t.Any:

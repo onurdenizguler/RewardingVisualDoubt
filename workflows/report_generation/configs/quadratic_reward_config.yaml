@@ -29,3 +29,5 @@ report_generation_ppo_hyperparameters:
   max_steps: null
   early_stopping_patience: null
   early_stopping_min_improvement: null
+  selected_train_datapoints_json: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/report_generation/selected_datapoints/1476_training_datapoints_balanced_difficulty.json"
+  selected_eval_datapoints_json: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/report_generation/selected_datapoints/144_validation_datapoints_balanced_difficulty.json"
