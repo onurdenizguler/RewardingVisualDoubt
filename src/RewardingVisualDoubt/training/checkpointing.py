@@ -26,6 +26,7 @@ class TrainingSuccessKPIs:
     mean_score_eval: list[float]
     ece_eval: list[float]
     heuristic_aggregated_score_eval: list[float]
+    weighted_mean_of_std_of_accuracies: list[float]
 
 
 def init_training_success_kpis() -> TrainingSuccessKPIs:
@@ -35,6 +36,7 @@ def init_training_success_kpis() -> TrainingSuccessKPIs:
         mean_score_eval=[],
         ece_eval=[],
         heuristic_aggregated_score_eval=[],
+        weighted_mean_of_std_of_accuracies=[],
     )
 
 

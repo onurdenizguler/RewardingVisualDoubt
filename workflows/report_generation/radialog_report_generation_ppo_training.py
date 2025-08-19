@@ -273,6 +273,7 @@ def train(
                     batch_green_scores_list_eval.extend(green_scores)
 
                 (
+                    weighted_mean_of_std_of_accuracies,
                     ece_eval,
                     conf_distribution_kl_eval,
                     mean_score_eval,
@@ -283,13 +284,13 @@ def train(
                     batch_scores_list_eval,
                     batch_green_scores_list_eval,
                     hyperparameters,
-                    heuristic_fn,
                 )
 
                 kpis.ece_eval.append(ece_eval)
                 kpis.conf_distribution_kl_eval.append(conf_distribution_kl_eval)
                 kpis.mean_score_eval.append(mean_score_eval)
                 kpis.heuristic_aggregated_score_eval.append(heuristic_aggregated_score_eval)
+                kpis.weighted_mean_of_std_of_accuracies.append(weighted_mean_of_std_of_accuracies)
 
                 decision_to_break = training.report_generation_ppo_decision_to_break(
                     step=step + 1,
@@ -328,10 +329,12 @@ def train(
         last_ece_eval=kpis.ece_eval[-1],
         last_conf_distribution_kl_eval=kpis.conf_distribution_kl_eval[-1],
         last_ece_and_conf_distribution_kl_eval=kpis.heuristic_aggregated_score_eval[-1],
+        last_weighted_mean_of_std_of_accuracies=kpis.weighted_mean_of_std_of_accuracies[-1],
         best_mean_score_eval=max(kpis.mean_score_eval),
         best_ece_eval=max(kpis.ece_eval),
         best_conf_distribution_kl_eval=max(kpis.conf_distribution_kl_eval),
         best_ece_and_conf_distribution_kl_eval=max(kpis.heuristic_aggregated_score_eval),
+        best_weighted_mean_of_std_of_accuracies=max(kpis.weighted_mean_of_std_of_accuracies),
     )
 
 

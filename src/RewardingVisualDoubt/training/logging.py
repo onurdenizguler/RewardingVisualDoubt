@@ -44,11 +44,13 @@ class ReportGenerationRunFinalMetrics:
     last_ece_eval: float
     last_conf_distribution_kl_eval: float
     last_ece_and_conf_distribution_kl_eval: float
+    last_weighted_mean_of_std_of_accuracies: float
 
     best_mean_score_eval: float
     best_ece_eval: float
     best_conf_distribution_kl_eval: float
     best_ece_and_conf_distribution_kl_eval: float
+    best_weighted_mean_of_std_of_accuracies: float
 
 
 @dataclasses.dataclass
@@ -245,11 +247,259 @@ def log_custom_metrics_for_binary_qa(
 # REPORT GENERATION LOGGING METHODS
 ##########################################################################################
 
+logging_for_type = t.Literal["eval", "train"]
+
+
+def log_train_metrics_for_report_generation_ppo(
+    step: int,
+    post_optimization_assets: ReportGenerationPostPPOOptimizationAssetsBatch,
+    device: torch.device,
+    tokenizer: transformers.LlamaTokenizer,
+    batch: dataset.MimicCxrLlavaModelInputBatchDict,
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+    accumulating_game_logs: GameLogsForReportGeneration | None = None,
+    log_calibration_plot: bool = False,
+) -> None:
+
+    input_ids, input_ids_list, images, stopping_criteria, batch_metadata_list = (
+        dataset.unpack_report_generation_batch_with_attention_mask_and_metadata_for_ppo(
+            device=device,
+            tokenizer=tokenizer,
+            batch=batch,
+            postprocessor=postprocessing.remove_preciding_padding_from_batch_tensor,
+        )
+    )
+
+    input_texts_list: list[str] = tokenizer.batch_decode(
+        postprocessing.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
+    )
+    queries_with_gt_info = [  # build strings with patience info, gt findings, etc [
+        f"(GT Findings {str(batch_metadata_list[idx].disease_labels)}) - {input_prompt}"
+        for idx, input_prompt in enumerate(input_texts_list)
+    ]
+
+    if accumulating_game_logs:
+
+        new_game_logs_to_append = {
+            "queries": queries_with_gt_info,
+            "responses": post_optimization_assets.generated_texts,
+            "ppo_target_responses": tokenizer.batch_decode(post_optimization_assets.ppo_responses),
+            "accuracies": [accuracy for accuracy in post_optimization_assets.green_scores],
+            "scores": [float(score.item()) for score in post_optimization_assets.scores],
+            "confidences": post_optimization_assets.generated_confidence_values,
+            "confidences_after_replacement": post_optimization_assets.generated_confidence_values_after_replacement,
+            "is_confidence_randomly_replaced": post_optimization_assets.is_confidence_randomly_replaced,
+        }
+
+        for k, v in new_game_logs_to_append.items():
+            accumulating_game_logs[k].extend(v)
+
+        batch_size = input_ids.shape[0]
+        _prepare_table_and_plots_for_report_generation(
+            batch_size=batch_size,
+            accumulating_game_logs=accumulating_game_logs,
+            post_optimization_assets=post_optimization_assets,
+            log_calibration_plot=log_calibration_plot,
+        )
+
+        for window in [50, 100, 500]:
+            _log_training_heuristics(
+                step=step,
+                hyperparameters=hyperparameters,
+                confidences=accumulating_game_logs["confidences"],
+                scores=accumulating_game_logs["scores"],
+                accuracies=accumulating_game_logs["accuracies"],
+                logging_for="train",
+                window=window,
+            )
+
+        wandb.log(post_optimization_assets.stats, step=step)
+
+
+def log_eval_metrics_for_report_generation_ppo(
+    step: int,
+    generated_confidence_values_list: list[int | None],
+    scores_list: list[float],
+    green_scores_list: list[float | None],
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+) -> t.Tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+]:
+
+    try:
+        wandb.log(
+            {
+                "val_conf_calib": wandb.Image(
+                    evaluation.plot_calibration_curve(
+                        confidences=generated_confidence_values_list,
+                        accuracies=green_scores_list,
+                        plot_std=True,
+                    )
+                )
+            },
+            step=step,
+        )
+    except:
+        pass
+
+    (
+        weighted_mean_of_std_of_accuracies,
+        ece,
+        conf_distribution_kl,
+        mean_score,
+        heuristic_aggregated_score_eval,
+    ) = _log_training_heuristics(
+        step=step,
+        hyperparameters=hyperparameters,
+        confidences=generated_confidence_values_list,
+        scores=scores_list,
+        accuracies=green_scores_list,
+        logging_for="eval",
+        window=None,
+    )
+
+    return (
+        weighted_mean_of_std_of_accuracies,
+        ece,
+        conf_distribution_kl,
+        mean_score,
+        heuristic_aggregated_score_eval,
+    )
+
+
+def _log_training_heuristics(
+    step: int,
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+    confidences: list[int | None],
+    scores: list[float],
+    accuracies: list[float | None],
+    logging_for: logging_for_type,
+    window: int | None = None,
+) -> t.Tuple[
+    float,
+    float,
+    float,
+    float,
+    float,
+]:
+    logging_identifier = logging_for + f"_last_{window}" if window else logging_for
+
+    starting_ind = -window if window else 0
+
+    (
+        weighted_mean_of_std_of_accuracies,
+        ece,
+        conf_distribution_kl,
+        mean_score,
+        std_score,
+    ) = _calculate_kpi_metrics(
+        generated_confidence_values_list=confidences[starting_ind:],
+        scores_list=scores[starting_ind:],
+        green_scores_list=accuracies[starting_ind:],
+        hyperparameters=hyperparameters,
+    )
+
+    heuristic_score = _calculate_heuristic_score(
+        hyperparameters,
+        weighted_mean_of_std_of_accuracies,
+        ece,
+        conf_distribution_kl,
+        mean_score,
+    )
+
+    wandb.log({f"mean_score_{logging_identifier}": mean_score}, step=step)
+    wandb.log({f"std_score_{logging_identifier}": std_score}, step=step)
+    wandb.log({f"ece_{logging_identifier}": ece}, step=step)
+    wandb.log({f"conf_distribution_kl_{logging_identifier}": conf_distribution_kl}, step=step)
+    wandb.log(
+        {f"accuracy_std_normalized_{logging_identifier}": weighted_mean_of_std_of_accuracies},
+        step=step,
+    )
+    wandb.log(
+        {f"heuristic_aggregated_score_{logging_identifier}": heuristic_score},
+        step=step,
+    )
+
+    return (
+        weighted_mean_of_std_of_accuracies,
+        ece,
+        conf_distribution_kl,
+        mean_score,
+        heuristic_score,
+    )
+
+
+def _calculate_kpi_metrics(
+    generated_confidence_values_list: list[int | None],
+    scores_list: list[float],
+    green_scores_list: list[float | None],
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+):
+    bins = evaluation.binify_accuracies_with_std(
+        confidences=generated_confidence_values_list,
+        accuracies=green_scores_list,
+    )
+    ece = 1.0  # Set to maximum value to be able to calculate ece_and_distribution_score in the worst case that no bins are returned
+    weighted_mean_of_std_of_accuracies = 1.0  # Set to maximum in case bins are none. Note that this value is guaranteed to be between 0.0 and 1.0
+    if bins:
+        counts, avg_acc, std_acc = bins
+        ece = evaluation.compute_ece(avg_acc, counts)
+        weighted_mean_of_std_of_accuracies = evaluation.std_score_normalized_within_bin_dispersion(
+            bin_means=avg_acc, bin_stds=std_acc, bin_counts=counts
+        )
+
+    conf_distribution_kl = evaluation.compute_confidence_distribution_metric(
+        postprocessing.normalize_confidence_scores(
+            generated_confidence_values_list,
+            hyperparameters.granular_confidence,
+        ),
+        num_bins=11 if not hyperparameters.granular_confidence else 101,
+    )
+    mean_score = float(np.mean(scores_list))
+    std_score = float(np.std(scores_list))
+    return weighted_mean_of_std_of_accuracies, ece, conf_distribution_kl, mean_score, std_score
+
+
+def _calculate_heuristic_score(
+    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+    weighted_mean_of_std_of_accuracies: float,
+    ece: float,
+    conf_distribution_kl: float,
+    mean_score: float,
+) -> float:
+
+    reward_ece_and_distribution_score = evaluation.RewardECEAndDistributionScore(
+        ece=ece,
+        conf_distribution_kl_divergence=conf_distribution_kl,
+        avg_reward=mean_score,
+    )
+    r_max_and_r_min = reward.get_max_and_min_reward(
+        hyperparameters.reward_function,
+        hyperparameters.granular_confidence,
+        hyperparameters.reward_config,
+    )
+
+    heuristic_score: float = hyperparameters.reward_ece_and_distribution_score_heuristic(
+        reward_ece_and_distribution_score=reward_ece_and_distribution_score,
+        n_bins=(
+            len(shared.POSSIBLE_CONFIDENCES)
+            if not hyperparameters.granular_confidence
+            else len(shared.POSSIBLE_GRANULAR_CONFIDENCES)
+        ),
+        r_max_and_r_min=r_max_and_r_min,
+        accuracy_std=weighted_mean_of_std_of_accuracies,
+    )
+
+    return heuristic_score
+
 
 def _prepare_table_and_plots_for_report_generation(
     batch_size: int,
     accumulating_game_logs: GameLogsForReportGeneration,
-    truncated_accumulating_game_logs: GameLogsForReportGeneration,
     post_optimization_assets: ReportGenerationPostPPOOptimizationAssetsBatch,
     log_calibration_plot: bool,
 ):
@@ -294,215 +544,12 @@ def _prepare_table_and_plots_for_report_generation(
         except:
             pass
 
+    post_optimization_assets.stats["game_log"] = wandb.Table(columns=column_names, rows=table_rows)
     post_optimization_assets.stats["ratio_of_changed_confidences"] = accumulating_game_logs[
         "is_confidence_randomly_replaced"
     ].count(True) / len(accumulating_game_logs["is_confidence_randomly_replaced"])
 
     return table_rows, column_names
-
-
-def _log_training_heuristics(
-    step: int,
-    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
-    truncated_accumulating_game_logs: GameLogsForReportGeneration,
-):
-
-    for window in [50, 100, 500]:
-
-        (
-            ece,
-            conf_distribution_kl,
-            mean_score,
-            std_score,
-        ) = calculate_kpi_metrics(
-            generated_confidence_values_list=truncated_accumulating_game_logs["confidences"][
-                -window:
-            ],
-            scores_list=truncated_accumulating_game_logs["scores"][-window:],
-            green_scores_list=truncated_accumulating_game_logs["accuracies"][-window:],
-            hyperparameters=hyperparameters,
-        )
-
-        wandb.log({f"mean_score_train_last_{window}": mean_score}, step=step)
-        wandb.log({f"std_score_train_last_{window}": std_score}, step=step)
-        wandb.log({f"ece_train_last_{window}": ece}, step=step)
-        wandb.log({f"conf_distribution_kl_train_last_{window}": conf_distribution_kl}, step=step)
-        wandb.log(
-            {
-                f"heuristic_aggregated_score_train_last_{window}": evaluation.reward_ece_and_distribution_score_heuristic(
-                    reward_ece_and_distribution_score=evaluation.RewardECEAndDistributionScore(
-                        ece=ece,
-                        conf_distribution_kl_divergence=conf_distribution_kl,
-                        avg_reward=mean_score,
-                    ),
-                    n_bins=11 if not hyperparameters.granular_confidence else 101,
-                    r_max_and_r_min=reward.get_max_and_min_reward(
-                        hyperparameters.reward_function,
-                        hyperparameters.granular_confidence,
-                        hyperparameters.reward_config,
-                    ),
-                )
-            },
-            step=step,
-        )
-
-
-def calculate_kpi_metrics(
-    generated_confidence_values_list, scores_list, green_scores_list, hyperparameters
-):
-    bins = evaluation.binify_accuracies(
-        confidences=generated_confidence_values_list,
-        accuracies=green_scores_list,
-    )
-    ece = 1.0  # Set to maximum value to be able to calculate ece_and_distribution_score in the worst case that no bins are returned
-    if bins:
-        counts, avg_acc = bins
-        ece = evaluation.compute_ece(avg_acc, counts)
-
-    conf_distribution_kl = evaluation.compute_confidence_distribution_metric(
-        postprocessing.normalize_confidence_scores(
-            generated_confidence_values_list,
-            hyperparameters.granular_confidence,
-        ),
-        num_bins=11 if not hyperparameters.granular_confidence else 101,
-    )
-    mean_score = float(np.mean(scores_list))
-    std_score = float(np.std(scores_list))
-    return ece, conf_distribution_kl, mean_score, std_score
-
-
-def log_train_metrics_for_report_generation_ppo(
-    step: int,
-    post_optimization_assets: ReportGenerationPostPPOOptimizationAssetsBatch,
-    device: torch.device,
-    tokenizer: transformers.LlamaTokenizer,
-    batch: dataset.MimicCxrLlavaModelInputBatchDict,
-    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
-    accumulating_game_logs: GameLogsForReportGeneration | None = None,
-    log_calibration_plot: bool = False,
-) -> None:
-
-    input_ids, input_ids_list, images, stopping_criteria, batch_metadata_list = (
-        dataset.unpack_report_generation_batch_with_attention_mask_and_metadata_for_ppo(
-            device=device,
-            tokenizer=tokenizer,
-            batch=batch,
-            postprocessor=postprocessing.remove_preciding_padding_from_batch_tensor,
-        )
-    )
-
-    input_texts_list: list[str] = tokenizer.batch_decode(
-        postprocessing.replace_image_token_with_another_token_for_list_of_tensors(input_ids_list)
-    )
-    queries_with_gt_info = [  # build strings with patience info, gt findings, etc [
-        f"(GT Findings {str(batch_metadata_list[idx].disease_labels)}) - {input_prompt}"
-        for idx, input_prompt in enumerate(input_texts_list)
-    ]
-
-    table_rows = []
-    if accumulating_game_logs:
-
-        new_game_logs_to_append = {
-            "queries": queries_with_gt_info,
-            "responses": post_optimization_assets.generated_texts,
-            "ppo_target_responses": tokenizer.batch_decode(post_optimization_assets.ppo_responses),
-            "accuracies": [accuracy for accuracy in post_optimization_assets.green_scores],
-            "scores": [float(score.item()) for score in post_optimization_assets.scores],
-            "confidences": post_optimization_assets.generated_confidence_values,
-            "confidences_after_replacement": post_optimization_assets.generated_confidence_values_after_replacement,
-            "is_confidence_randomly_replaced": post_optimization_assets.is_confidence_randomly_replaced,
-        }
-
-        for k, v in new_game_logs_to_append.items():
-            accumulating_game_logs[k].extend(v)
-
-        truncated_accumulating_game_logs = accumulating_game_logs
-        if len(accumulating_game_logs["queries"]) > 500:
-            for key in accumulating_game_logs.keys():
-                truncated_accumulating_game_logs[key] = accumulating_game_logs[key][-500:]
-
-        batch_size = input_ids.shape[0]
-        table_rows, column_names = _prepare_table_and_plots_for_report_generation(
-            batch_size=batch_size,
-            accumulating_game_logs=accumulating_game_logs,
-            truncated_accumulating_game_logs=truncated_accumulating_game_logs,
-            post_optimization_assets=post_optimization_assets,
-            log_calibration_plot=log_calibration_plot,
-        )
-
-        _log_training_heuristics(step, hyperparameters, truncated_accumulating_game_logs)
-
-        post_optimization_assets.stats["game_log"] = wandb.Table(
-            columns=column_names, rows=table_rows
-        )
-        wandb.log(post_optimization_assets.stats, step=step)
-
-
-def log_eval_metrics_for_report_generation_ppo(
-    step: int,
-    generated_confidence_values_list: list[int | None],
-    scores_list: list[float],
-    green_scores_list: list[float | None],
-    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
-    heuristic_fn: t.Callable,
-) -> t.Tuple[
-    float,
-    float,
-    float,
-    float,
-]:
-    ece, conf_distribution_kl, mean_score, std_score = calculate_kpi_metrics(
-        generated_confidence_values_list, scores_list, green_scores_list, hyperparameters
-    )
-
-    reward_ece_and_distribution_score = evaluation.RewardECEAndDistributionScore(
-        ece=ece,
-        conf_distribution_kl_divergence=conf_distribution_kl,
-        avg_reward=mean_score,
-    )
-
-    heuristic_aggregated_score_eval = heuristic_fn(
-        reward_ece_and_distribution_score,
-        (
-            len(shared.POSSIBLE_GRANULAR_CONFIDENCES)
-            if hyperparameters.granular_confidence
-            else len(shared.POSSIBLE_CONFIDENCES)
-        ),
-        reward.get_max_and_min_reward(
-            hyperparameters.reward_function,
-            hyperparameters.granular_confidence,
-            hyperparameters.reward_config,
-        ),
-    )
-
-    try:
-        wandb.log(
-            {
-                "val_conf_calib": wandb.Image(
-                    evaluation.plot_calibration_curve(
-                        confidences=generated_confidence_values_list,
-                        accuracies=green_scores_list,
-                        plot_std=True,
-                    )
-                )
-            },
-            step=step,
-        )
-    except:
-        pass
-
-    wandb.log({"mean_score_eval": mean_score}, step=step)
-    wandb.log({"std_score_eval": std_score}, step=step)
-    wandb.log({"ece_eval": ece}, step=step)
-    wandb.log({"conf_distribution_kl_eval": conf_distribution_kl}, step=step)
-    wandb.log(
-        {
-            "heuristic_aggregated_score_eval": heuristic_aggregated_score_eval,
-            "step": step,
-        }
-    )
-
-    return ece, conf_distribution_kl, mean_score, heuristic_aggregated_score_eval
 
 
 ############################################################################################################
