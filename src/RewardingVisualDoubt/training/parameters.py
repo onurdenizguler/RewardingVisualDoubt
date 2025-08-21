@@ -28,6 +28,7 @@ class TrainingMetaParameters(Parameters):
     num_batches_to_evaluate: int
     save_training_model_every_n_checkpoints: int
     plot_confidence_calibration_for_training_batches_every_n_batch: int
+    llama_cpp_port: int = 8080
 
 
 @dataclasses.dataclass(frozen=True)

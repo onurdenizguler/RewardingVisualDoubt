@@ -9,7 +9,7 @@ import trl
 
 from RewardingVisualDoubt import dataset, green, response, reward, shared
 
-from . import llava_ppo, logging, postprocessing
+from . import llava_ppo, logging, parameters, postprocessing
 
 ############### BINARY Q&A STEPS ###############
 
@@ -270,6 +270,7 @@ def radialog_report_generation_ppo_evaluation_step(
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
     reward_function: t.Callable,
     reward_config: reward.RewardConfig,
+    metaparameters: parameters.TrainingMetaParameters,
     granular_confidence: bool = False,
 ) -> tuple[list[float], list[int | None], list[float | None]]:
 
@@ -310,7 +311,9 @@ def radialog_report_generation_ppo_evaluation_step(
 
     ########## 5.5 Fetch GREEN scores for the generated reports #########
     green_scores = green.get_green_score_for_batch_of_generated_reports(
-        generated_reports=confidence_stripped_generated_texts, gt_reports=gt_reports_list
+        generated_reports=confidence_stripped_generated_texts,
+        gt_reports=gt_reports_list,
+        port=metaparameters.llama_cpp_port,
     )
     green_scores = round_green_scores_to_nearest_float(green_scores)
 
@@ -339,6 +342,7 @@ def radialog_report_generation_ppo_training_step(
     reward_function: t.Callable[..., float],
     reward_config: reward.RewardConfig,
     random_number_generator: random.Random,
+    metaparameters: parameters.TrainingMetaParameters,
     chance_to_change_confidence: float = 0.5,  # Default value: every 2nd batch
     granular_confidence: bool = False,
 ) -> logging.ReportGenerationPostPPOOptimizationAssetsBatch:
@@ -402,7 +406,9 @@ def radialog_report_generation_ppo_training_step(
 
     ########## 5.5 Fetch GREEN scores for the generated reports #########
     green_scores = green.get_green_score_for_batch_of_generated_reports(
-        generated_reports=confidence_stripped_generated_texts, gt_reports=gt_reports_list
+        generated_reports=confidence_stripped_generated_texts,
+        gt_reports=gt_reports_list,
+        port=metaparameters.llama_cpp_port,
     )
     green_scores = round_green_scores_to_nearest_float(green_scores)
 

@@ -45,9 +45,11 @@ def train(
     model.config.padding_side = "left"
 
     print("Starting the llama server...")
-    if not green.is_server_alive():
-        green.start_llama_server(quantization=green.Quantization.Q4_K_M)
-    while not green.is_server_alive():
+    if not green.is_server_alive(port=metaparameters.llama_cpp_port):
+        green.start_llama_server(
+            port=metaparameters.llama_cpp_port, quantization=green.Quantization.Q4_K_M
+        )
+    while not green.is_server_alive(port=metaparameters.llama_cpp_port):
         time.sleep(1)
 
     ######################################## 2. Load the datasets and the dataloaders ########################################
@@ -201,6 +203,7 @@ def train(
                     hyperparameters.reward_function,
                     hyperparameters.reward_config,
                     random_number_generator,
+                    metaparameters=metaparameters,
                     chance_to_change_confidence=hyperparameters.chance_to_change_confidence,
                     granular_confidence=hyperparameters.granular_confidence,
                 )
@@ -248,7 +251,7 @@ def train(
                             hyperparameters.reward_config,
                         )
                     wandb.log(
-                        {"mean_score_training_checkpoint": kpis.mean_score_train},
+                        {"mean_score_training_checkpoint": kpis.mean_score_train[-1]},
                         step=global_step + 1,
                     )
                     scores_until_checkpoint_train = []
@@ -283,6 +286,7 @@ def train(
                             batch=eval_batch,
                             reward_function=hyperparameters.reward_function,
                             reward_config=hyperparameters.reward_config,
+                            metaparameters=metaparameters,
                             granular_confidence=hyperparameters.granular_confidence,
                         )
                     )
