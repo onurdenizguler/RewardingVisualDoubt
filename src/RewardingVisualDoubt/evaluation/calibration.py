@@ -5,6 +5,8 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
+from RewardingVisualDoubt import shared
+
 
 @dataclasses.dataclass
 class RewardECEAndDistributionScore:
@@ -162,6 +164,21 @@ def binify_accuracies_with_std(
     std_acc = t.cast(list[float], [np.std(bin_acc[i]) if bin_acc[i] else 0.0 for i in range(11)])
 
     return counts, avg_acc, std_acc
+
+
+def plot_accuracy_bins(accuracies: list[float | None]):
+    accuracies = shared.round_green_scores_to_nearest_float(accuracies)
+    accuracies = [accuracy for accuracy in accuracies if accuracy is not None]
+    accuracies_array = np.array(accuracies)
+
+    counts = np.unique(accuracies_array, return_counts=True)
+
+    plt.bar(counts[0], counts[1], width=0.08, align="center", edgecolor="black")
+    plt.xticks(np.arange(0, 1.1, 0.1))
+    plt.xlabel("Accuracy (rounded to nearest 0.1)")
+    plt.ylabel("Count")
+    plt.title(f"Accuracy distribution n = {sum(counts[1])} avg_acc = {np.mean(accuracies_array)} ")
+    plt.show()
 
 
 def plot_calibration_curve(
