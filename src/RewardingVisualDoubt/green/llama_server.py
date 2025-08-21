@@ -5,8 +5,7 @@ import subprocess
 import psutil
 import requests
 
-from .shared import (DEFAULT_RADLLAMA_GGUF_DIR, Quantization,
-                     create_radllama_model_filename)
+from .shared import DEFAULT_RADLLAMA_GGUF_DIR, Quantization, create_radllama_model_filename
 
 LLAMA_SERVER_BIN = "/home/guests/deniz_gueler/repos/llama.cpp/build/bin/llama-server"
 PORT = 8080
@@ -22,9 +21,10 @@ def _get_cpu_threads() -> int:
     return int(slurm_threads) if slurm_threads else 8  # conservative fallback
 
 
-def is_server_alive() -> bool:
+def is_server_alive(port: int = PORT) -> bool:
+    health_endpoint = f"http://localhost:{port}/health"
     try:
-        r = requests.get(HEALTH_ENDPOINT, timeout=2)
+        r = requests.get(health_endpoint, timeout=2)
         return r.status_code == 200
     except:
         return False
