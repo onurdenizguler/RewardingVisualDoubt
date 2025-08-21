@@ -98,7 +98,7 @@ def accuracy_std_reward_ece_and_distribution_score_heuristic(
         + w_kl * (1.0 - kl_norm)  # small KL  → big score
         + w_reward * r_norm  # large reward → big score
     )
-    return score / (w_ece + w_kl + w_reward)  # keeps final range [0, 1]
+    return score / (w_std + w_ece + w_kl + w_reward)  # keeps final range [0, 1]
 
 
 def compute_ece(avg_acc: list[float], counts: list[int]):
