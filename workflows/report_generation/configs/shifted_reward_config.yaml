@@ -1,5 +1,5 @@
 training_metaparameters:
-  name_of_fine_tuning: "radialog_report_generation_ppo_training"
+  name_of_fine_tuning: "radialog_report_generation_reward_tuning"
   llava_model_path: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_with_confidence_sft_full_merged_model"
   adapter_path: null
   out_dir: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models"
@@ -8,6 +8,7 @@ training_metaparameters:
   num_batches_to_evaluate: 8
   save_training_model_every_n_checkpoints: 3
   plot_confidence_calibration_for_training_batches_every_n_batch: 5
+  llama_cpp_port: 63556
 
 report_generation_ppo_hyperparameters:
   num_epochs: 50
@@ -19,12 +20,13 @@ report_generation_ppo_hyperparameters:
   learning_rate: 6.0e-6
   chance_to_change_confidence: 0.25
   # Reward related hyperparameters might be overwritten in reward tuning process
-  reward_function: "RewardingVisualDoubt.reward.scaled_quadratic_blend_distance_reward"
+  reward_function: "RewardingVisualDoubt.reward.scaled_normalized_log_likelihood_reward"
   reward_ece_and_distribution_score_heuristic: "RewardingVisualDoubt.evaluation.calibration.accuracy_std_reward_ece_and_distribution_score_heuristic"
   reward_config:
-    beta: 0.0
+    scaling: "shifted"
+    eps: 1.0e-2
     scale: 2.0
-    r_max: 0.0
+    squash_scale: null
   granular_confidence: false
   max_steps: null
   early_stopping_patience: null
