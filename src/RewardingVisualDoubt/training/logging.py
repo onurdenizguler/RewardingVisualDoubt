@@ -396,15 +396,18 @@ def _log_training_heuristics(
         conf_distribution_kl,
         mean_score,
         std_score,
-    ) = _calculate_kpi_metrics(
+    ) = calculate_kpi_metrics(
         generated_confidence_values_list=confidences[starting_ind:],
         scores_list=scores[starting_ind:],
         green_scores_list=accuracies[starting_ind:],
-        hyperparameters=hyperparameters,
+        granular_confidence=hyperparameters.granular_confidence,
     )
 
-    heuristic_score = _calculate_heuristic_score(
-        hyperparameters,
+    heuristic_score = calculate_heuristic_score(
+        hyperparameters.reward_function,
+        hyperparameters.granular_confidence,
+        hyperparameters.reward_config,
+        hyperparameters.reward_ece_and_distribution_score_heuristic,
         weighted_mean_of_std_of_accuracies,
         ece,
         conf_distribution_kl,
@@ -433,11 +436,11 @@ def _log_training_heuristics(
     )
 
 
-def _calculate_kpi_metrics(
+def calculate_kpi_metrics(
     generated_confidence_values_list: list[int | None],
     scores_list: list[float],
     green_scores_list: list[float | None],
-    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+    granular_confidence: bool,
 ):
     bins = evaluation.binify_accuracies_with_std(
         confidences=generated_confidence_values_list,
@@ -455,17 +458,20 @@ def _calculate_kpi_metrics(
     conf_distribution_kl = evaluation.compute_confidence_distribution_metric(
         postprocessing.normalize_confidence_scores(
             generated_confidence_values_list,
-            hyperparameters.granular_confidence,
+            granular_confidence,
         ),
-        num_bins=11 if not hyperparameters.granular_confidence else 101,
+        num_bins=11 if not granular_confidence else 101,
     )
     mean_score = float(np.mean(scores_list))
     std_score = float(np.std(scores_list))
     return weighted_mean_of_std_of_accuracies, ece, conf_distribution_kl, mean_score, std_score
 
 
-def _calculate_heuristic_score(
-    hyperparameters: parameters.ReportGenerationPPOHyperparameters,
+def calculate_heuristic_score(
+    reward_function: t.Callable,
+    granular_confidence: bool,
+    reward_config: reward.RewardConfig | reward.QuadraticBlendRewardConfig,
+    reward_ece_and_distribution_score_heuristic: t.Callable,
     weighted_mean_of_std_of_accuracies: float,
     ece: float,
     conf_distribution_kl: float,
@@ -478,16 +484,16 @@ def _calculate_heuristic_score(
         avg_reward=mean_score,
     )
     r_max_and_r_min = reward.get_max_and_min_reward(
-        hyperparameters.reward_function,
-        hyperparameters.granular_confidence,
-        hyperparameters.reward_config,
+        reward_function,
+        granular_confidence,
+        reward_config,
     )
 
-    heuristic_score: float = hyperparameters.reward_ece_and_distribution_score_heuristic(
+    heuristic_score: float = reward_ece_and_distribution_score_heuristic(
         reward_ece_and_distribution_score=reward_ece_and_distribution_score,
         n_bins=(
             len(shared.POSSIBLE_CONFIDENCES)
-            if not hyperparameters.granular_confidence
+            if not granular_confidence
             else len(shared.POSSIBLE_GRANULAR_CONFIDENCES)
         ),
         r_max_and_r_min=r_max_and_r_min,

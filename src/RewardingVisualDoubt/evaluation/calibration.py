@@ -187,6 +187,7 @@ def plot_calibration_curve(
     plot_std: bool = False,
     ece: float | None = None,
     model_name: str | None = None,
+    close_fig: bool = True,
 ):
     """
     Generate a confidence calibration plot (reliability diagram).
@@ -251,7 +252,8 @@ def plot_calibration_curve(
     for i, (acc, count) in enumerate(zip(avg_acc, counts)):
         ax.text(i, acc + 0.03, f"n={count}", ha="center", fontsize=8)
 
-    plt.close(fig)  # Prevent automatic display
+    if close_fig:
+        plt.close(fig)  # Prevent automatic display
     return fig
 
 
