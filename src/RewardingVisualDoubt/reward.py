@@ -203,28 +203,6 @@ def scaled_normalized_log_likelihood_reward(
     return float(config.scale * shaped)
 
 
-def get_max_and_min_reward(
-    reward_function: t.Callable,
-    granular_confidence: bool = False,
-    config: RewardConfig = RewardConfig(),
-) -> tuple[float, float]:
-    """
-    Get the maximum possible reward for a given reward function.
-    """
-    if granular_confidence:
-        max_confidence = shared.POSSIBLE_GRANULAR_CONFIDENCES[-1]
-    else:
-        max_confidence = shared.POSSIBLE_CONFIDENCES[-1]
-
-    # Assuming perfect accuracy (1.0)
-    max_reward = reward_function(max_confidence, 1.0, granular_confidence, config)
-
-    # Assuming worst-case accuracy (0.0)
-    min_reward = reward_function(max_confidence, 0.0, granular_confidence, config)
-
-    return max_reward, min_reward
-
-
 ########################################################################
 # Quadratic, distance-based reward
 ########################################################################
@@ -283,3 +261,28 @@ def scaled_quadratic_blend_distance_reward(
     p_hat = normalize_confidence(confidence, granular_confidence, clipped=False)
     p_star = float(accuracy)
     return quadratic_blend_reward_from_probs(p_hat, p_star, config)
+
+
+###
+
+
+def get_max_and_min_reward(
+    reward_function: t.Callable,
+    granular_confidence: bool = False,
+    config: RewardConfig | QuadraticBlendRewardConfig = RewardConfig(),
+) -> tuple[float, float]:
+    """
+    Get the maximum possible reward for a given reward function.
+    """
+    if granular_confidence:
+        max_confidence = shared.POSSIBLE_GRANULAR_CONFIDENCES[-1]
+    else:
+        max_confidence = shared.POSSIBLE_CONFIDENCES[-1]
+
+    # Assuming perfect accuracy (1.0)
+    max_reward = reward_function(max_confidence, 1.0, granular_confidence, config)
+
+    # Assuming worst-case accuracy (0.0)
+    min_reward = reward_function(max_confidence, 0.0, granular_confidence, config)
+
+    return max_reward, min_reward
