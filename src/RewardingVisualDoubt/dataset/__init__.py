@@ -7,3 +7,4 @@ from .mimic_cxr import *
 from .preprocessing import *
 from .sampling import *
 from .unpack import *
+from .custom_testsets import *
