@@ -21,7 +21,7 @@ This work successfully extends the Rewarding Doubt method to multimodal medical 
 - **σ_CBND: 0.44** - Low within-bin dispersion, indicating consistent accuracy within confidence bins
 - **D_NCKL: 0.18** - Rich diversity of expressed confidence values, avoiding mode collapse
 - **Monotonic calibration curve** - Confidence estimates align with actual accuracy across all confidence levels
-- **Strong generalization**: ECE of 0.07 on out-of-distribution test set (unseen anatomical conditions)
+- **Strong generalization**: ECE of 0.07 on out-of-distribution test set
 - **On-par with white-box methods**: Performance comparable to the Trained Probe method (ECE: 0.03) while maintaining the advantages of a generative approach
 
 **Novel Contributions:**
@@ -92,6 +92,7 @@ RewardingVisualDoubt/
 │   ├── training/                  # PPO and SFT training implementations
 │   ├── evaluation/                # Calibration and performance metrics utilities
 │   ├── reward.py                  # Reward function definitions
+│   ├── response.py                # Response parsing and confidence extraction
 │   ├── inference/                 # Generation and inference utilities
 │   ├── green/                     # GREEN score evaluation (llama.cpp integration)
 │   ├── prompter/                  # Prompt engineering for different tasks
@@ -218,6 +219,32 @@ Key hyperparameters can be configured at the top of each training script. Traini
 - Novel Quadratic-Blend reward for report generation
 - Confidence normalization utilities
 - Task-specific reward computation
+
+### Response Processing (`src/RewardingVisualDoubt/response.py`)
+- Parsing and extraction of confidence values from generated text
+- Response validation and formatting
+- Handling of different response formats for Binary Q&A and Report Generation
+
+### Prompt Engineering (`src/RewardingVisualDoubt/prompter/`)
+- Task-specific prompt construction for Binary Q&A
+- Report generation prompts with confidence elicitation
+- SFT and inference prompt variations
+- Self-guiding confidence request injection
+
+### Inference (`src/RewardingVisualDoubt/inference/`)
+- Generation utilities for model inference
+- Batch processing and dataloader-based generation
+- Stopping criteria and token sampling configuration
+
+### Infrastructure (`src/RewardingVisualDoubt/infrastructure/`)
+- Development utilities and helper functions
+- Code reloading for interactive development
+- System configuration and device management
+
+### Model Management (`src/RewardingVisualDoubt/vllm/`)
+- LLaVA model loading with LoRA adapters
+- Tokenizer configuration with image support
+- Model checkpointing and merging utilities
 
 ### GREEN Integration (`src/RewardingVisualDoubt/green/`)
 - llama.cpp server management
