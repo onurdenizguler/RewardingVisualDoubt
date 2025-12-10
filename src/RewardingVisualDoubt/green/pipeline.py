@@ -1,5 +1,5 @@
 from . import domain, llama_client, postprocessing, prompter
-from .evaluate import evaluate
+from . import evaluate
 
 
 def _create_instruction_and_token_length_for_a_single_report(
