@@ -10,19 +10,32 @@ from RewardingVisualDoubt import dataset, shared, response
 
 
 def generate_radialog_report_for_single_study(
-    model, tokenizer, input_ids, image_tensor, stopping_criteria
+    model, tokenizer, input_ids, image_tensor, stopping_criteria, attention_mask=None
 ) -> str:
+    if attention_mask is not None:
+        with torch.inference_mode():
+            output_ids = model.generate(
+                input_ids=input_ids,
+                images=image_tensor,
+                attention_mask=attention_mask,
+                do_sample=False,
+                use_cache=True,
+                max_new_tokens=300,
+                stopping_criteria=[stopping_criteria],
+                pad_token_id=tokenizer.pad_token_id,
+            )
 
-    with torch.inference_mode():
-        output_ids = model.generate(
-            input_ids,
-            images=image_tensor,
-            do_sample=False,
-            use_cache=True,
-            max_new_tokens=300,
-            stopping_criteria=[stopping_criteria],
-            pad_token_id=tokenizer.pad_token_id,
-        )
+    else:
+        with torch.inference_mode():
+            output_ids = model.generate(
+                input_ids=input_ids,
+                images=image_tensor,
+                do_sample=False,
+                use_cache=True,
+                max_new_tokens=300,
+                stopping_criteria=[stopping_criteria],
+                pad_token_id=tokenizer.pad_token_id,
+            )
     pred = tokenizer.decode(output_ids[0, input_ids.shape[1] :]).strip().replace("</s>", "")
     return pred
 
