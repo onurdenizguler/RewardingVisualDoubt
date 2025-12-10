@@ -263,8 +263,8 @@ This work builds upon several key contributions in medical AI and confidence cal
 ```bibtex
 @article{pellegrini2024radialog,
   title={RaDialog: A Large Vision-Language Model for Radiology Report Generation and Conversational Assistance},
-  author={Pellegrini, Chantal and Eken, Seyran and Ahmad, Ayhan and Mücke, Marie and Inhoffen, Clemens and Ziegelmayer, Sophia and Schnabel, Jonas and Nörenberg, Dirk and Sabel, Bastian and Pfeuffer, Philip and Rueckert, Daniel and Braren, Rickmer and Kaissis, Georgios},
-  journal={Medical Imaging with Deep Learning (MIDL)},
+  author={C. Pellegrini, E. Özsoy, B. Busam, N. Navab, and M. Keicher},
+  publisher={Medical Imaging with Deep Learning (MIDL)},
   note={Accepted for publication at MIDL 2025},
   year={2024}
 }
@@ -272,14 +272,34 @@ This work builds upon several key contributions in medical AI and confidence cal
 @article{stangel2025rewarding,
   title={Rewarding Doubt: A Reinforcement Learning Approach to Calibrated Confidence Expression of Large Language Models},
   author={Stangel, Paul and Bani-Harouni, David and Pellegrini, Chantal and Özsoy, Ege and Zaripova, Kamilia and Keicher, Matthias and Navab, Nassir},
-  journal={arXiv preprint arXiv:2503.02623},
+  publisher={arXiv preprint arXiv:2503.02623},
   year={2025}
 }
 
-@article{ostmeier2022green,
-  title={GREEN: Generative Radiology Report Evaluation and Error Notation},
-  author={Ostmeier, Sophie and others},
-  year={2022}
+@inproceedings{ostmeier-etal-2024-green,
+    title = "{GREEN}: Generative Radiology Report Evaluation and Error Notation",
+    author = "Ostmeier, Sophie  and
+      Xu, Justin  and
+      Chen, Zhihong  and
+      Varma, Maya  and
+      Blankemeier, Louis  and
+      Bluethgen, Christian  and
+      Md, Arne Edward Michalson  and
+      Moseley, Michael  and
+      Langlotz, Curtis  and
+      Chaudhari, Akshay S  and
+      Delbrouck, Jean-Benoit",
+    editor = "Al-Onaizan, Yaser  and
+      Bansal, Mohit  and
+      Chen, Yun-Nung",
+    booktitle = "Findings of the Association for Computational Linguistics: EMNLP 2024",
+    month = nov,
+    year = "2024",
+    address = "Miami, Florida, USA",
+    publisher = "Association for Computational Linguistics",
+    url = "https://aclanthology.org/2024.findings-emnlp.21/",
+    doi = "10.18653/v1/2024.findings-emnlp.21",
+    pages = "374--390",
 }
 
 @article{johnson2019mimic,
