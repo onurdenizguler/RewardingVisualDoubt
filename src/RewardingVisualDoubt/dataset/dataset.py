@@ -18,8 +18,6 @@ biovil_image_transformer = shared.create_chest_xray_transform_for_inference(
 bfloat16_dtype: torch.dtype = torch.bfloat16
 
 
-# TODO ?Should i always cast images to dtype=torch.bfloat16!!!! (The logic currently is quite convoluted and images get cast only while being moved to device)
-
 BinaryQANumSamplesPerDisease = {
     domain.DatasetSplit.TRAIN: 3000,
     domain.DatasetSplit.VALIDATION: 50,
