@@ -1,11 +1,6 @@
 # RewardingVisualDoubt
 
-# Installation 
-Run following line at the root dir:
-```shell
-pip install -e . --config-settings editable_mode=compat
-```
-# Dependencies 
+# 1. Dependencies 
 In a conda managed environment, install with the following 
 
 ```bash
@@ -42,3 +37,9 @@ pip install -e .
 ```
 
 This installation allows ```RewardingVisualDoubt``` to import the package by a simple import: ```ìmport radialog```
+
+# 2. Installation 
+Run following line at the root dir:
+```shell
+pip install -e . --config-settings editable_mode=compat
+```

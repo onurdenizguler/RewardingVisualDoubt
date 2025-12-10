@@ -1,21 +1,23 @@
-import dataclasses
-import datetime
 import functools
 import itertools
-import os
+import random
+import sys
 import time
 import typing as t
 
-import accelerate
+import json
 import numpy as np
 import trl
 import wandb
 from tqdm import tqdm
+from torch.utils.data import Subset
 
 from RewardingVisualDoubt import (
     dataset,
+    evaluation,
     green,
     prompter,
+    reward,
     shared,
     training,
     vllm,
@@ -27,7 +29,7 @@ def train(
     hyperparameters: training.parameters.ReportGenerationPPOHyperparameters,
 ) -> training.ReportGenerationRunFinalMetrics:
 
-    ######################################## 1. Load the model and tokenizer ########################################
+    ######################################## 1. Load the RaDialog model and tokenizer, start the RadLLamaGREEN llama.cpp server ########################################
 
     device, device_str = shared.get_device_and_device_str()
     model = vllm.load_pretrained_llava_model_for_ppo_training_with_lora_adapters(
@@ -41,6 +43,14 @@ def train(
     )
 
     model.config.padding_side = "left"
+
+    print("Starting the llama server...")
+    if not green.is_server_alive(port=metaparameters.llama_cpp_port):
+        green.start_llama_server(
+            port=metaparameters.llama_cpp_port, quantization=green.Quantization.Q4_K_M
+        )
+    while not green.is_server_alive(port=metaparameters.llama_cpp_port):
+        time.sleep(1)
 
     ######################################## 2. Load the datasets and the dataloaders ########################################
 
@@ -63,6 +73,22 @@ def train(
         prompter=prompter_,
     )
 
+    if hyperparameters.selected_train_datapoints_json:
+        with open(hyperparameters.selected_train_datapoints_json, "r") as f:
+            datapoint_indexes: list[int] = json.load(f)
+        dataset_train = t.cast(
+            dataset.ReportGenerationPromptedMimicCxrLlavaModelInputDataset,
+            Subset(dataset_train, datapoint_indexes),
+        )
+
+    if hyperparameters.selected_eval_datapopoints_json:
+        with open(hyperparameters.selected_eval_datapopoints_json, "r") as f:
+            datapoint_indexes: list[int] = json.load(f)
+        dataset_eval = t.cast(
+            dataset.ReportGenerationPromptedMimicCxrLlavaModelInputDataset,
+            Subset(dataset_eval, datapoint_indexes),
+        )
+
     dataloader_train = dataset.get_mimic_cxr_llava_model_input_dataloader(
         dataset_train,
         batch_size=hyperparameters.batch_size,
@@ -74,16 +100,11 @@ def train(
 
     dataloader_eval = dataset.get_mimic_cxr_llava_model_input_dataloader(
         dataset_eval,
-        batch_size=2 * hyperparameters.batch_size,
+        batch_size=hyperparameters.eval_batch_size,
         padding_tokenizer=vllm.load_pretrained_llava_tokenizer_with_image_support(
             for_use_in_padding=True
         ),
         num_workers=8,
-    )
-
-    eval_batch_iterator = iter(dataloader_eval)
-    iterator_train = itertools.islice(
-        iter(dataloader_train), metaparameters.n_training_batches_to_skip, None
     )
 
     ######################################## 3. Define the PPO and generation configurations ########################################
@@ -96,18 +117,6 @@ def train(
         # backward_batch_size=MINI_BATCH_SIZE,  # Default value from TRL library is 1, gets overwritten anyways at __init__ time
         mini_batch_size=hyperparameters.mini_batch_size,
         gradient_accumulation_steps=hyperparameters.gradient_accumulation_steps,
-        log_with="wandb",
-        tracker_project_name=metaparameters.name_of_fine_tuning,
-        tracker_kwargs={
-            "wandb": training.get_wandb_parameters_for_report_generation_ppo(
-                metaparameters, hyperparameters, selected_prompter_fn
-            ),
-        },
-        project_kwargs=dataclasses.asdict(
-            accelerate.utils.ProjectConfiguration(
-                project_dir=metaparameters.name_of_fine_tuning, logging_dir="logs"
-            )
-        ),
         remove_unused_columns=False,
         kl_penalty="kl",
         init_kl_coef=0.05,
@@ -125,15 +134,16 @@ def train(
     }
 
     generation_kwargs_eval = {
+        "top_k": 0.0,  # No top-k sampling
         "top_p": 1.0,  # Let us limit the sampling a bit
         "temperature": 1.0,  # Decrease the randomness
         "do_sample": True,
-        "pad_token_id": tokenizer.eos_token_id,
+        "pad_token_id": tokenizer.pad_token_id,
         "max_new_tokens": 300,
         "eos_token_id": tokenizer.eos_token_id,
     }
 
-    ########################################## 4. Get trainer and set training aspirations and setup the llama.cpp environment ########################################
+    ########################################## 4. Get trainer and initialize the wandb tracker ########################################
 
     ppo_trainer = t.cast(
         training.MultimodalPPOTrainer,
@@ -144,99 +154,121 @@ def train(
         ),
     )
 
-    print("Starting the llama server...")
-    green.start_llama_server(quantization=green.Quantization.Q4_K_M)
-    while not green.is_server_alive():
-        time.sleep(1)
+    wandb.init(
+        project=metaparameters.name_of_fine_tuning,
+        dir="/home/guests/deniz_gueler/repos/RewardingVisualDoubt/logs/radialog_report_generation_ppo_training",
+        **training.get_wandb_parameters_for_report_generation_ppo(
+            metaparameters, hyperparameters, selected_prompter_fn
+        ),
+    )
 
     ######################################## 5. Train the model ######################################################################################################
 
-    best_score_eval: float = -float("inf")
-    mean_score_train: float = -float("inf")
-    conf_distribution_kl_eval: float = float("inf")
-    ece_eval: float = 1.0
-    best_ece_eval: float = 1.0
-    best_conf_distribution_kl_eval: float = float("inf")
-    best_ece_and_conf_distribution_kl_eval: float = -float("inf")
-    patience: int = 0
+    kpis = training.init_training_success_kpis()
+    patience = training.PatienceTracker()
     scores_until_checkpoint_train: list[float] = []
-    accumulating_game_logs = training.create_empty_game_logs()
+    accumulating_game_logs = training.create_empty_game_logs_for_report_generation()
     perform_validation_before_starting_training = (
         metaparameters.perform_validation_before_starting_training
     )
+    random_number_generator = random.Random(53355335)
 
     for epoch in range(hyperparameters.num_epochs):
-
+        eval_batch_iterator = iter(dataloader_eval)
+        iterator_train = itertools.islice(
+            iter(dataloader_train), metaparameters.n_training_batches_to_skip, None
+        )
+        number_of_steps_per_epoch = (
+            len(dataloader_train) - metaparameters.n_training_batches_to_skip
+        )
         for step in tqdm(
-            range(len(dataloader_train) - metaparameters.n_training_batches_to_skip),
+            range(number_of_steps_per_epoch),
             desc=f"Taking training steps... Epoch {epoch+1}/{hyperparameters.num_epochs}",
+            file=sys.stderr,
+            dynamic_ncols=True,
         ):
+            global_step = step + (epoch * number_of_steps_per_epoch)
             if not perform_validation_before_starting_training:
 
                 batch: dataset.MimicCxrLlavaModelInputBatchDict = next(iterator_train)
 
                 ######### 5.1 - 5.9 Perform a training step #########
-                scores, generated_confidence_values, green_scores = (
-                    training.radialog_report_generation_ppo_training_step(
-                        model,
-                        device,
-                        tokenizer,
-                        generation_kwargs_ppo,
-                        ppo_trainer,
-                        batch,
-                        hyperparameters.reward_function,
-                        hyperparameters.reward_config,
-                        accumulating_game_logs,
-                        chance_to_change_confidence=hyperparameters.chance_to_change_confidence,
-                        granular_confidence=hyperparameters.granular_confidence,
-                        log_calibration_plot=(
-                            step % int(hyperparameters.steps_until_checkpoint / 8)
-                        )
-                        == 0,  # log at every eighth of the checkpoint interval
-                    )
+                post_optimization_assets = training.radialog_report_generation_ppo_training_step(
+                    model,
+                    device,
+                    tokenizer,
+                    generation_kwargs_ppo,
+                    ppo_trainer,
+                    batch,
+                    hyperparameters.reward_function,
+                    hyperparameters.reward_config,
+                    random_number_generator,
+                    metaparameters=metaparameters,
+                    chance_to_change_confidence=hyperparameters.chance_to_change_confidence,
+                    granular_confidence=hyperparameters.granular_confidence,
                 )
 
-                scores_until_checkpoint_train += [s.item() for s in scores]
+                scores_until_checkpoint_train += [s.item() for s in post_optimization_assets.scores]
+                training.log_train_metrics_for_report_generation_ppo(
+                    step=global_step + 1,
+                    post_optimization_assets=post_optimization_assets,
+                    device=device,
+                    tokenizer=tokenizer,
+                    batch=batch,
+                    hyperparameters=hyperparameters,
+                    accumulating_game_logs=accumulating_game_logs,
+                    log_calibration_plot=(
+                        (global_step + 1)
+                        % metaparameters.plot_confidence_calibration_for_training_batches_every_n_batch
+                    )
+                    == 0,  # log at every (1/n) of the checkpoint interval
+                )
 
             ######### 5.10 Checkpoint the model if checkpoint step is reached #########
             perform_eval = (
-                (step + 1) % hyperparameters.steps_until_checkpoint == 0
+                (global_step + 1) % hyperparameters.steps_until_checkpoint == 0
                 or perform_validation_before_starting_training
             )
             if perform_eval:
 
                 if not perform_validation_before_starting_training:
 
-                    mean_train_score = float(np.mean(scores_until_checkpoint_train))
+                    kpis.mean_score_train.append(float(np.mean(scores_until_checkpoint_train)))
                     print(
-                        f"Arrived at checkpoint {step + 1}. Average training score: {mean_train_score}"
+                        f"Arrived at checkpoint {global_step + 1}. Average training score: {kpis.mean_score_train[-1]}"
                     )
-                    if (step + 1) % (3 * hyperparameters.steps_until_checkpoint) == 0:
+                    if (global_step + 1) % (
+                        hyperparameters.steps_until_checkpoint
+                        * metaparameters.save_training_model_every_n_checkpoints
+                    ) == 0:
                         print("Saving the model checkpoint...")
-                        # Create dir if it does not exist
-                        save_dir = os.path.join(
+                        training.save_training_checkpoint_lora_adapters_and_value_head_to_dir(
+                            ppo_trainer,
+                            epoch,
+                            global_step,
                             metaparameters.out_dir,
                             metaparameters.name_of_fine_tuning,
-                            datetime.datetime.now().strftime("%Y-%m-%d"),
-                            f"checkpoint-{step + 1}",
+                            hyperparameters.reward_config,
                         )
-                        os.makedirs(save_dir, exist_ok=True)
-                        ppo_trainer.save_pretrained(
-                            save_dir,
-                        )
-                    wandb.log({"mean_score_training": mean_train_score})
+                    wandb.log(
+                        {"mean_score_training_checkpoint": kpis.mean_score_train[-1]},
+                        step=global_step + 1,
+                    )
+                    scores_until_checkpoint_train = []
 
                 model.eval()
-                eval_batch_scores_list: list[float] = []
-                eval_batch_generated_confidence_values_list: list[int | None] = []
-                eval_batch_green_scores_list: list[float | None] = []
+                batch_scores_list_eval: list[float] = []
+                batch_generated_confidence_values_list_eval: list[int | None] = []
+                batch_green_scores_list_eval: list[float | None] = []
                 for _ in tqdm(
                     range(
                         metaparameters.num_batches_to_evaluate
                         if metaparameters.num_batches_to_evaluate > 0
                         else len(dataloader_eval)
                     ),
-                    desc=f"Running evaluation at checkpoint {step + 1}",
+                    desc=f"Running evaluation at checkpoint {global_step + 1}",
+                    file=sys.stderr,
+                    dynamic_ncols=True,
                 ):
                     try:
                         eval_batch = next(eval_batch_iterator)
@@ -254,41 +286,54 @@ def train(
                             batch=eval_batch,
                             reward_function=hyperparameters.reward_function,
                             reward_config=hyperparameters.reward_config,
+                            metaparameters=metaparameters,
                             granular_confidence=hyperparameters.granular_confidence,
                         )
                     )
-                    eval_batch_scores_list.extend(scores)
-                    eval_batch_generated_confidence_values_list.extend(generated_confidence_values)
-                    eval_batch_green_scores_list.extend(green_scores)
+                    batch_scores_list_eval.extend(scores)
+                    batch_generated_confidence_values_list_eval.extend(generated_confidence_values)
+                    batch_green_scores_list_eval.extend(green_scores)
 
-                ece_eval, eval_conf_distribution_kl, mean_eval_score, _ = (
-                    training.log_eval_metrics_for_report_generation_ppo(
-                        eval_batch_generated_confidence_values_list,
-                        eval_batch_scores_list,
-                        eval_batch_green_scores_list,
-                        hyperparameters,
-                    )
+                (
+                    weighted_mean_of_std_of_accuracies,
+                    ece_eval,
+                    conf_distribution_kl_eval,
+                    mean_score_eval,
+                    heuristic_aggregated_score_eval,
+                ) = training.log_eval_metrics_for_report_generation_ppo(
+                    global_step + 1,
+                    batch_generated_confidence_values_list_eval,
+                    batch_scores_list_eval,
+                    batch_green_scores_list_eval,
+                    hyperparameters,
                 )
 
+                kpis.ece_eval.append(ece_eval)
+                kpis.conf_distribution_kl_eval.append(conf_distribution_kl_eval)
+                kpis.mean_score_eval.append(mean_score_eval)
+                kpis.heuristic_aggregated_score_eval.append(heuristic_aggregated_score_eval)
+                kpis.weighted_mean_of_std_of_accuracies.append(weighted_mean_of_std_of_accuracies)
+
                 decision_to_break = training.report_generation_ppo_decision_to_break(
-                    step=step,
+                    step=global_step + 1,
                     patience=patience,
-                    eval_conf_distribution_kl=eval_conf_distribution_kl,
-                    ece_eval=ece_eval,
-                    best_ece_and_distribution_score=best_ece_and_conf_distribution_kl_eval,
+                    heuristic_aggregated_scores=kpis.heuristic_aggregated_score_eval,
                     hyperparameters=hyperparameters,
                 )
 
                 if not perform_validation_before_starting_training:
-                    if mean_eval_score > best_eval_score:
+                    if kpis.heuristic_aggregated_score_eval[-1] >= max(
+                        kpis.heuristic_aggregated_score_eval
+                    ):
+                        print("Saving best eval model yet...")
                         training.save_best_eval_lora_adapters_and_value_head_to_dir(
                             ppo_trainer,
                             epoch,
-                            step,
+                            global_step,
                             metaparameters.out_dir,
                             metaparameters.name_of_fine_tuning,
+                            reward_config=hyperparameters.reward_config,
                         )
-                        best_eval_score = mean_eval_score
 
                 perform_validation_before_starting_training = False
 
@@ -298,14 +343,50 @@ def train(
         if decision_to_break:
             break
 
+    wandb.finish()
+
     return training.ReportGenerationRunFinalMetrics(
-        mean_score_train_at_last_checkpoint=0,
-        last_mean_score_eval=0,
-        last_ece_eval=0,
-        last_conf_distribution_kl_eval=0,
-        last_ece_and_conf_distribution_kl_eval=0,
-        best_mean_score_eval=0,
-        best_ece_eval=0,
-        best_conf_distribution_kl_eval=0,
-        best_ece_and_conf_distribution_kl_eval=0,
+        mean_score_train_at_last_checkpoint=kpis.mean_score_train[-1],
+        last_mean_score_eval=kpis.mean_score_eval[-1],
+        last_ece_eval=kpis.ece_eval[-1],
+        last_conf_distribution_kl_eval=kpis.conf_distribution_kl_eval[-1],
+        last_ece_and_conf_distribution_kl_eval=kpis.heuristic_aggregated_score_eval[-1],
+        last_weighted_mean_of_std_of_accuracies=kpis.weighted_mean_of_std_of_accuracies[-1],
+        best_mean_score_eval=max(kpis.mean_score_eval),
+        best_ece_eval=max(kpis.ece_eval),
+        best_conf_distribution_kl_eval=max(kpis.conf_distribution_kl_eval),
+        best_ece_and_conf_distribution_kl_eval=max(kpis.heuristic_aggregated_score_eval),
+        best_weighted_mean_of_std_of_accuracies=max(kpis.weighted_mean_of_std_of_accuracies),
     )
+
+
+if __name__ == "__main__":
+    import argparse, pickle
+    from pathlib import Path
+
+    TRIAL_DIR = Path(
+        "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/logs/radialog_report_generation_ppo_training/trials"
+    )
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--spec", required=True, help="Path to pickle with metaparameters & hyperparameters"
+    )
+    args = parser.parse_args()
+
+    with open(args.spec, "rb") as f:
+        payload = pickle.load(f)
+
+    metaparameters: training.TrainingMetaParameters = payload["metaparameters"]
+    hyperparameters: training.ReportGenerationPPOHyperparameters = payload["hyperparameters"]
+
+    # Run training (new process → fresh CUDA context)
+    result = train(metaparameters, hyperparameters)
+
+    run_hash = training.create_hash_out_of_parameters(metaparameters, hyperparameters)
+    pkl_dir = TRIAL_DIR / "final_metrics"
+    pkl_dir.mkdir(parents=True, exist_ok=True)
+    pkl_path = pkl_dir / f"final_metrics_{run_hash}.pkl"
+
+    with open(pkl_path, "wb") as f:
+        pickle.dump(result, f, protocol=pickle.HIGHEST_PROTOCOL)

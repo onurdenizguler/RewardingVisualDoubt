@@ -30,7 +30,9 @@ def parse_confidences(
     """
     confidences = []
     LOWER_CONFIDENCE_BOUND = 0
-    UPPER_CONFIDENCE_BOUND = 10 if not granular_confidence else 100
+    UPPER_CONFIDENCE_BOUND = (
+        10 if not granular_confidence else 100
+    )  # TODO infer bounds from shared.py
     for conf in generated_confidences:
         # Clean and search for confidence key-value pair, allowing single quotes and unquoted keys
         clean_conf = conf.replace("\n", "").strip()

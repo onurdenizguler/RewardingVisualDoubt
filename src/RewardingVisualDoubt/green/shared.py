@@ -3,11 +3,6 @@ import enum
 
 class Quantization(enum.Enum):
     f16 = "f16"
-    # Q8_0 = "Q8_0"
-    # Q6_K = "Q6_K"
-    # Q5_K_S = "Q5_K_S"
-    # Q5_K_M = "Q5_K_M"
-    # Q4_K_S = "Q4_K_S"
     Q4_K_M = "Q4_K_M"
 
 

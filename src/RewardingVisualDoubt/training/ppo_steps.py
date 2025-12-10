@@ -1,3 +1,4 @@
+import dataclasses
 import functools
 import random
 import typing as t
@@ -8,7 +9,7 @@ import trl
 
 from RewardingVisualDoubt import dataset, green, response, reward, shared
 
-from . import llava_ppo, logging, postprocessing, reinforcement
+from . import llava_ppo, logging, parameters, postprocessing
 
 ############### BINARY Q&A STEPS ###############
 
@@ -124,7 +125,7 @@ def radialog_binary_qa_ppo_training_step(
             generated_confidence_values,
             old_generated_confidence_values,
             is_confidence_randomly_replaced,
-        ) = handle_random_confidence_replacement(
+        ) = postprocessing.handle_random_confidence_replacement(
             tokenizer,
             generated_texts,
             generated_confidence_values,
@@ -228,6 +229,13 @@ def radialog_binary_qa_ppo_training_step(
 ####################################################################################################################
 
 
+def round_green_scores_to_nearest_float(green_scores: list[float | None]) -> list[float | None]:
+    rounded_scores = []
+    for score in green_scores:
+        rounded_scores.append(round(score, 1) if score else score)
+    return rounded_scores
+
+
 def generate_reports(
     model: trl.AutoModelForCausalLMWithValueHead,
     ppo_trainer: llava_ppo.MultimodalPPOTrainer,
@@ -238,18 +246,18 @@ def generate_reports(
     generation_kwargs: dict,
 ) -> list[torch.Tensor]:
 
-    print("Generating reports...")
     model.eval()
     model.gradient_checkpointing_disable()
-    generated_ids = ppo_trainer.generate(
-        query_tensor=input_ids_list,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
-        images=images,
-        return_prompt=False,
-        batch_size=input_ids.shape[0],
-        use_cache=True,
-        stopping_criteria=[stopping_criteria],
-        **generation_kwargs,
-    )
+    with torch.inference_mode():
+        generated_ids = ppo_trainer.generate(
+            query_tensor=input_ids_list,  # ppo_trainer.generate() method admits list of tensors, handles padding and batching itself
+            images=images,
+            return_prompt=False,
+            batch_size=input_ids.shape[0],
+            use_cache=True,
+            stopping_criteria=[stopping_criteria],
+            **generation_kwargs,
+        )
     return generated_ids
 
 
@@ -262,6 +270,7 @@ def radialog_report_generation_ppo_evaluation_step(
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
     reward_function: t.Callable,
     reward_config: reward.RewardConfig,
+    metaparameters: parameters.TrainingMetaParameters,
     granular_confidence: bool = False,
 ) -> tuple[list[float], list[int | None], list[float | None]]:
 
@@ -301,10 +310,12 @@ def radialog_report_generation_ppo_evaluation_step(
     )
 
     ########## 5.5 Fetch GREEN scores for the generated reports #########
-    print("Fetching GREEN scores for the generated reports...")
     green_scores = green.get_green_score_for_batch_of_generated_reports(
-        generated_reports=confidence_stripped_generated_texts, gt_reports=gt_reports_list
+        generated_reports=confidence_stripped_generated_texts,
+        gt_reports=gt_reports_list,
+        port=metaparameters.llama_cpp_port,
     )
+    green_scores = round_green_scores_to_nearest_float(green_scores)
 
     ########## 5.6 Compute the scores (rewards) #########
 
@@ -330,11 +341,11 @@ def radialog_report_generation_ppo_training_step(
     batch: dataset.MimicCxrLlavaModelInputBatchDict,
     reward_function: t.Callable[..., float],
     reward_config: reward.RewardConfig,
-    accumulating_game_logs: logging.GameLogs | None = None,
+    random_number_generator: random.Random,
+    metaparameters: parameters.TrainingMetaParameters,
     chance_to_change_confidence: float = 0.5,  # Default value: every 2nd batch
     granular_confidence: bool = False,
-    log_calibration_plot: bool = False,
-) -> tuple[list[torch.FloatTensor], list[int | None], list[float | None]]:
+) -> logging.ReportGenerationPostPPOOptimizationAssetsBatch:
 
     ######### 5.1 Unpack the batch #########
 
@@ -348,7 +359,6 @@ def radialog_report_generation_ppo_training_step(
     )
 
     ######### 5.2 Generate the reports #########
-    print("Generating reports...")
     generated_ids = generate_reports(
         model,
         ppo_trainer,
@@ -372,31 +382,35 @@ def radialog_report_generation_ppo_training_step(
         granular_confidence=granular_confidence,
     )
 
-    old_generated_confidence_values = generated_confidence_values.copy()
+    generated_confidence_values_after_replacement = generated_confidence_values.copy()
     is_confidence_randomly_replaced = [False] * len(generated_confidence_values)
 
     ############# 5.4 Handle random confidence replacement #########
 
-    # if random.random() < chance_to_change_confidence:  # Replace with random confidence
-    #     (
-    #         generated_ids,
-    #         generated_texts,
-    #         generated_confidence_values,
-    #         old_generated_confidence_values,
-    #         is_confidence_randomly_replaced,
-    #     ) = _handle_random_confidence_replacement(
-    #         tokenizer,
-    #         generated_texts,
-    #         generated_confidence_values,
-    #         device=device,
-    #         granular_confidence=granular_confidence,
-    #     )
+    if (
+        random_number_generator.random() < chance_to_change_confidence
+    ):  # Replace with random confidence
+        (
+            generated_ids,
+            generated_texts,
+            generated_confidence_values_after_replacement,
+            generated_confidence_values,
+            is_confidence_randomly_replaced,
+        ) = postprocessing.handle_random_confidence_replacement(
+            tokenizer,
+            generated_texts,
+            generated_confidence_values,
+            device=device,
+            granular_confidence=granular_confidence,
+        )
 
     ########## 5.5 Fetch GREEN scores for the generated reports #########
-    print("Fetching GREEN scores for the generated reports...")
     green_scores = green.get_green_score_for_batch_of_generated_reports(
-        generated_reports=confidence_stripped_generated_texts, gt_reports=gt_reports_list
+        generated_reports=confidence_stripped_generated_texts,
+        gt_reports=gt_reports_list,
+        port=metaparameters.llama_cpp_port,
     )
+    green_scores = round_green_scores_to_nearest_float(green_scores)
 
     ########## 5.6 Compute the scores (rewards) #########
 
@@ -404,10 +418,10 @@ def radialog_report_generation_ppo_training_step(
         reward_function(
             confidence=confidence,
             accuracy=accuracy,
-            granular_confidence=False,
+            granular_confidence=granular_confidence,
             config=reward_config,
         )
-        for confidence, accuracy in zip(generated_confidence_values, green_scores)
+        for confidence, accuracy in zip(generated_confidence_values_after_replacement, green_scores)
     ]
 
     scores = t.cast(
@@ -426,7 +440,6 @@ def radialog_report_generation_ppo_training_step(
     ]
 
     ########## 5.8 Take a PPO optimization step #########
-    print("Taking a PPO optimization step...")
     ppo_queries, ppo_responses = (
         prepare_ppo_queries_and_responses_from_reformulated_query_and_responses(
             reformulated_query_and_responses=reformulated_query_and_responses
@@ -434,14 +447,28 @@ def radialog_report_generation_ppo_training_step(
     )
     model.train()
     model.gradient_checkpointing_enable()
-    stats = ppo_trainer.multimodal_step(
-        queries=ppo_queries,
-        responses=ppo_responses,
-        scores=scores,
-        images=images,
-    )
+    try:
+        stats = ppo_trainer.multimodal_step(
+            queries=ppo_queries,
+            responses=ppo_responses,
+            scores=scores,
+            images=images,
+        )
+    except Exception as e:
+        print(f"FAILURE AT PPO STEP: {e}")
+        stats = {}
 
-    return scores, generated_confidence_values, green_scores
+    post_optimization_assets = create_post_ppo_optimization_assets(
+        generated_confidence_values=generated_confidence_values,
+        generated_confidence_values_after_replacement=generated_confidence_values_after_replacement,
+        is_confidence_randomly_replaced=is_confidence_randomly_replaced,
+        generated_texts=generated_texts,
+        ppo_responses=ppo_responses,
+        stats=stats,
+        scores=scores,
+        green_scores=green_scores,
+    )
+    return post_optimization_assets
 
 
 #####################################################################################################################
@@ -449,34 +476,25 @@ def radialog_report_generation_ppo_training_step(
 #####################################################################################################################
 
 
-def handle_random_confidence_replacement(
-    tokenizer: transformers.PreTrainedTokenizer,
-    generated_texts: list[str],
-    generated_confidence_values: list[int | None],
-    device: torch.device,
-    granular_confidence: bool,
-) -> tuple[list[torch.Tensor], list[str], list[int | None], list[int | None], list[bool]]:
-    old_generated_confidence_values = generated_confidence_values.copy()
-    generated_texts = reinforcement.overwrite_confidence(
-        generated_texts, generated_confidence_values, granular_confidence=granular_confidence
-    )
-    generated_ids = []
-    for text in generated_texts:
-        ids = t.cast(torch.Tensor, tokenizer.encode(text, return_tensors="pt"))
-        generated_ids.append(ids.squeeze(0).to(device=device))
-    generated_confidence_values = response.parse_confidences(generated_texts, granular_confidence)
-    is_confidence_randomly_replaced = [
-        old_conf != new_conf
-        for old_conf, new_conf in zip(old_generated_confidence_values, generated_confidence_values)
-    ]
+def prepare_ppo_queries_and_responses_from_reformulated_query_and_responses(
+    reformulated_query_and_responses: list[postprocessing.ReformulatedQueryAndResponseDict],
+) -> tuple[list[torch.LongTensor], list[torch.LongTensor]]:
 
-    return (
-        generated_ids,
-        generated_texts,
-        generated_confidence_values,
-        old_generated_confidence_values,
-        is_confidence_randomly_replaced,
+    ppo_queries = t.cast(
+        list[torch.LongTensor],
+        [
+            reformulated_query_and_response["query_ids"]
+            for reformulated_query_and_response in reformulated_query_and_responses
+        ],
     )
+    ppo_responses = t.cast(
+        list[torch.LongTensor],
+        [
+            reformulated_query_and_response["response_ids"]
+            for reformulated_query_and_response in reformulated_query_and_responses
+        ],
+    )
+    return ppo_queries, ppo_responses
 
 
 def create_post_report_generation_assets(
@@ -504,22 +522,24 @@ def create_post_report_generation_assets(
     )
 
 
-def prepare_ppo_queries_and_responses_from_reformulated_query_and_responses(
-    reformulated_query_and_responses: list[postprocessing.ReformulatedQueryAndResponseDict],
-) -> tuple[list[torch.LongTensor], list[torch.LongTensor]]:
+def create_post_ppo_optimization_assets(
+    generated_confidence_values: list[int | None],
+    generated_confidence_values_after_replacement: list[int | None],
+    is_confidence_randomly_replaced: list[bool],
+    generated_texts: list[str],
+    ppo_responses: list[torch.LongTensor],
+    stats: dict,
+    scores: list[torch.FloatTensor],
+    green_scores: list[float | None],
+) -> logging.ReportGenerationPostPPOOptimizationAssetsBatch:
 
-    ppo_queries = t.cast(
-        list[torch.LongTensor],
-        [
-            reformulated_query_and_response["query_ids"]
-            for reformulated_query_and_response in reformulated_query_and_responses
-        ],
+    return logging.ReportGenerationPostPPOOptimizationAssetsBatch(
+        scores=scores,
+        green_scores=green_scores,
+        generated_confidence_values=generated_confidence_values,
+        generated_confidence_values_after_replacement=generated_confidence_values_after_replacement,
+        is_confidence_randomly_replaced=is_confidence_randomly_replaced,
+        generated_texts=generated_texts,
+        ppo_responses=ppo_responses,
+        stats=stats,
     )
-    ppo_responses = t.cast(
-        list[torch.LongTensor],
-        [
-            reformulated_query_and_response["response_ids"]
-            for reformulated_query_and_response in reformulated_query_and_responses
-        ],
-    )
-    return ppo_queries, ppo_responses

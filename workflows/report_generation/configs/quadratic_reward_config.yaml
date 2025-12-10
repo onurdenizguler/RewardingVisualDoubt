@@ -1,0 +1,33 @@
+training_metaparameters:
+  name_of_fine_tuning: "radialog_report_generation_ppo_training"
+  llava_model_path: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radialog_report_generation_with_confidence_sft_full_merged_model"
+  adapter_path: null
+  out_dir: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/models"
+  perform_validation_before_starting_training: false
+  n_training_batches_to_skip: 0
+  num_batches_to_evaluate: 8
+  save_training_model_every_n_checkpoints: 3
+  plot_confidence_calibration_for_training_batches_every_n_batch: 5
+
+report_generation_ppo_hyperparameters:
+  num_epochs: 50
+  steps_until_checkpoint: 15
+  gradient_accumulation_steps: 3
+  batch_size: 12
+  eval_batch_size: 18
+  mini_batch_size: 4
+  learning_rate: 6.0e-6
+  chance_to_change_confidence: 0.25
+  # Reward related hyperparameters might be overwritten in reward tuning process
+  reward_function: "RewardingVisualDoubt.reward.scaled_quadratic_blend_distance_reward"
+  reward_ece_and_distribution_score_heuristic: "RewardingVisualDoubt.evaluation.calibration.accuracy_std_reward_ece_and_distribution_score_heuristic"
+  reward_config:
+    beta: 0.0
+    scale: 2.0
+    r_max: 0.0
+  granular_confidence: false
+  max_steps: null
+  early_stopping_patience: null
+  early_stopping_min_improvement: null
+  selected_train_datapoints_json: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/report_generation/selected_datapoints/1476_training_datapoints_balanced_difficulty.json"
+  selected_eval_datapopoints_json: "/home/guests/deniz_gueler/repos/RewardingVisualDoubt/workflows/report_generation/selected_datapoints/144_validation_datapoints_balanced_difficulty.json"
