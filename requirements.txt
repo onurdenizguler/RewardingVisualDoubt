@@ -18,10 +18,6 @@ seaborn==0.13.2
 bitsandbytes==0.41.0
 wandb==0.19.7
 sentence-transformers==2.2.2
-# streamlit==1.46.1
-# protobuf==3.20.1
-# sentence-transformers==2.2.2 #required by green
-#unsloth[colab-new] @ git+https://github.com/ChantalMP/unsloth.git # ver 2024.8
 
 # INSTALLED THROUGH CONDA CHANNELS
 # pytorch==2.0.1 

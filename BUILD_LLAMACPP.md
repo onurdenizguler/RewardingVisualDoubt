@@ -11,7 +11,7 @@ cmake -B build -DGGML_CUDA=ON -DLLAMA_CURL=OFF -DCUDA_TOOLKIT_ROOT_DIR=/usr/loca
 cmake --build build --config Release -j
 ```
 
-## To run the server
+## To run the server (example on my home dir)
 
 ```bash
 /home/guests/deniz_gueler/repos/llama.cpp/build/bin/llama-server --model /home/guests/deniz_gueler/repos/RewardingVisualDoubt/models/radllama_gguf/GREEN-RadLlama2-7b.Q4_K_M.gguf --n-gpu-layers 999
