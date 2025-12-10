@@ -186,5 +186,5 @@ def train(
 
 
 if __name__ == "__main__":
-    os.environ["WANDB_API_KEY"] = "da3cb086bbc110c16cbc5ba4c284a19b0b461710"
+    os.environ["WANDB_API_KEY"] = "REDUCTED"
     train()
