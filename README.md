@@ -271,7 +271,7 @@ This work builds upon several key contributions in medical AI and confidence cal
 
 @article{stangel2025rewarding,
   title={Rewarding Doubt: A Reinforcement Learning Approach to Calibrated Confidence Expression of Large Language Models},
-  author={Stangel, Paul and Bani-Harouni, David and Pellegrini, Chantal and {\"O}zsoy, Ege and Zaripova, Kamilia and Keicher, Matthias and Navab, Nassir},
+  author={Stangel, Paul and Bani-Harouni, David and Pellegrini, Chantal and Özsoy, Ege and Zaripova, Kamilia and Keicher, Matthias and Navab, Nassir},
   journal={arXiv preprint arXiv:2503.02623},
   year={2025}
 }
@@ -302,8 +302,8 @@ This project is licensed under the MIT License - see below for details.
 ```bibtex
 @mastersthesis{gueler2025confidence,
   title={Confidence Calibration for Medical Large Vision Language Models},
-  author={G{\"u}ler, Onur Deniz},
-  school={Technische Universit{\"a}t M{\"u}nchen},
+  author={Güler, Onur Deniz},
+  school={Technische Universität München},
   year={2025},
   type={Master's Thesis}
 }
