@@ -49,6 +49,14 @@ The results demonstrate that reinforcement learning-based confidence calibration
 
 *Lower values are better. σ_CBND = Confidence-Bin Normalized Dispersion, D_NCKL = Normalized Confidence KL Divergence*
 
+**Calibration Results Visualization:**
+
+<p align="center">
+  <img src="src/RewardingVisualDoubt/resulting-calibration-plot.png" alt="Confidence Calibration Results" width="800"/>
+</p>
+
+*Figure: Confidence calibration curves showing the alignment between predicted confidence and actual accuracy. Our PPO-trained model achieves near-perfect calibration with a monotonic curve, contrasting with the overconfident behavior of baseline methods.*
+
 ### Technical Contribution
 
 A key technical contribution of this work is the **modification of the TRL library's PPO implementation** to accommodate vision-language models. The original PPO code from TRL was designed for text-only models, but RaDialog processes both images and text. The modifications in `src/RewardingVisualDoubt/training/llava_ppo.py` enable proper handling of **vision token embeddings** that are inserted into the sequence when processing chest X-ray images. This required careful tracking and masking of image embedding positions during the PPO training loop to ensure correct gradient computation and reward attribution.
