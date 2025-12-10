@@ -2,6 +2,11 @@
 
 **Confidence Calibration for Medical Large Vision Language Models**
 
+*Master's Thesis Work — Technische Universität München, 2025*  
+📄 *Read the full [thesis](https://github.com/onurdenizguler/studyartifacts/blob/main/gueler_Confidence_Calibration_for_Medical_LVLMs.pdf) for detailed methodology, experiments, and analysis.*
+
+---
+
 This repository contains the implementation of reinforcement learning-based confidence calibration for **RaDialog**, a medical vision-language model for interactive radiology report generation. Building upon the original RaDialog model by Chantal Pellegrini et al. and the reward framework from the *Rewarding Doubt* study by Paul Stangel et al., this work explores using PPO (Proximal Policy Optimization) to improve model confidence calibration across two key tasks: **Binary Q&A** and **Report Generation**.
 
 ## Overview
