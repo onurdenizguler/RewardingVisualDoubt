@@ -295,7 +295,41 @@ This work builds upon several key contributions in medical AI and confidence cal
 
 ## License
 
-[Add your license information here]
+This project is licensed under the MIT License - see below for details.
+
+**If you use this work in your research, please cite:**
+
+```bibtex
+@mastersthesis{gueler2025confidence,
+  title={Confidence Calibration for Medical Large Vision Language Models},
+  author={G{\"u}ler, Onur Deniz},
+  school={Technische Universit{\"a}t M{\"u}nchen},
+  year={2025},
+  type={Master's Thesis}
+}
+```
+
+MIT License
+
+Copyright (c) 2025 Onur Deniz Güler
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ## Acknowledgments
 
