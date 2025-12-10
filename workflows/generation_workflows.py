@@ -23,28 +23,6 @@ device_str = (
 device = torch.device(device_str)
 
 
-# %%
-########### 1. TEST RIGINAL RADIALOG MODEL'S REPORT GENERATION BEHAVIOUR ###########
-# # %% REPORT GENERATION USE-CASE DATASET
-# # %% load the tokenizer
-# tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
-#     model_base=vllm.LLAVA_BASE_MODEL_NAME
-# )
-
-# # %% load the model
-# model = vllm.load_pretrained_llava_model(skip_lora_adapters=False)
-# NEEDS UPDATE W.R.T. new dataloader logic
-# report_generation_prompted_mimic_cxr_llava_model_input_test_dataset = dataset.PromptedMimicCxrLlavaModelInputDataset(
-#     mimic_cxr_df=mimic_cxr.create_mimic_cxr_dataset_df(),
-#     tokenizer=tokenizer,
-#     prompter=prompter.build_report_generation_instruction_from_findings,
-#     image_transform=dataset.biovil_image_transformer,
-#     split=dataset.DatasetSplit.TRAIN,
-#     supports_label=True,
-#     # device=torch.device(shared.torch_devices.cuda.value),
-# )
-
-########### 2. TEST  ORIGINAL RADIALOG MODEL'S BINARY QA BEHAVIOUR ###########
 # %% load the tokenizer
 tokenizer = vllm.load_pretrained_llava_tokenizer_with_image_support(
     model_base=vllm.LLAVA_BASE_MODEL_NAME
