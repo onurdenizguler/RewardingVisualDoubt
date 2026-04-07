@@ -1,7 +1,7 @@
 accelerate==0.21.0 # RaDialog repo prefers 0.21.0, but trl requires >=0.34.0
 huggingface-hub==0.23.2 # RaDialog repo prefers 0.19.4, but transformers 4.46.0 requires >=0.23.2
 timm==0.6.13
-transformers==4.31.0 #RaDialog repo prefers 4.31.0, but trl 0.11.0 requires 4.46.0 and unsloth2024.8 requires 4>=4.43.2
+transformers==4.53.0 #RaDialog repo prefers 4.31.0, but trl 0.11.0 requires 4.46.0 and unsloth2024.8 requires 4>=4.43.2
 scikit-image==0.18.1
 peft==0.4.0
 pytorch_lightning==1.6.5
